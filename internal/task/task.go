@@ -2,9 +2,7 @@ package task
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -113,6 +111,11 @@ func (q *Queue) EnqueueDownloadExec(agentID, url, args string, priority int) (*T
 func (q *Queue) EnqueueUpload(agentID, localPath, remotePath string, priority int) (*Task, error) {
 	taskArgs := map[string]string{"local_path": localPath, "remote_path": remotePath}
 	return q.Enqueue(agentID, "upload", taskArgs, priority)
+}
+
+func (q *Queue) EnqueueDownload(agentID, remotePath, localPath string, priority int) (*Task, error) {
+	taskArgs := map[string]string{"remote_path": remotePath, "local_path": localPath}
+	return q.Enqueue(agentID, "download", taskArgs, priority)
 }
 
 func (q *Queue) EnqueueScreenshot(agentID string, priority int) (*Task, error) {

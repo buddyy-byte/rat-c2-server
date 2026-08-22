@@ -1,10 +1,10 @@
 package ws
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -299,7 +299,7 @@ func (h *Hub) handleAgentMessage(client *Client, agt *agent.Agent, msg []byte) {
 
 	switch am.Type {
 	case "heartbeat":
-		agt.UpdateLastSeen()
+		h.agentMgr.UpdateLastSeen(agt.ID)
 		ack := AgentMessage{Type: "heartbeat_ack"}
 		ackData, _ := json.Marshal(ack)
 		client.Send <- ackData
@@ -620,7 +620,7 @@ func (h *Hub) handleDiscordTokens(agentID string, payload json.RawMessage) {
 
 func (h *Hub) handleSystemInfo(agentID string, payload json.RawMessage) {
 	// Update agent with system info
-	agt, ok := h.agentMgr.Get(agentID)
+	_, ok := h.agentMgr.Get(agentID)
 	if ok {
 		// Update metadata
 		h.agentMgr.UpdateNotes(agentID, string(payload))
