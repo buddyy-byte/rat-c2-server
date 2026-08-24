@@ -10,20 +10,20 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../dist',
+    outDir: './dist',
     emptyOutDir: true,
   },
   server: {
-    port: 3000,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      '/ws': {
-        target: 'ws://localhost:8080',
-        ws: true,
+      port: 3001,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:5000',
+          changeOrigin: true,
+        },
+        '/ws': {
+          target: 'ws://localhost:5000',
+          ws: true,
+        },
       },
     },
-  },
 })

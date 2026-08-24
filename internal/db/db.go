@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/jmoiron/sqlx"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func Init(dbPath string) (*sqlx.DB, error) {
@@ -18,7 +18,7 @@ func Init(dbPath string) (*sqlx.DB, error) {
 		}
 	}
 
-	db, err := sqlx.Connect("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sqlx.Connect("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -185,6 +185,7 @@ func migrate(db *sqlx.DB) error {
 		id TEXT PRIMARY KEY,
 		agent_id TEXT NOT NULL,
 		filename TEXT,
+		file_path TEXT,
 		width INTEGER,
 		height INTEGER,
 		size INTEGER,
@@ -247,6 +248,16 @@ func migrate(db *sqlx.DB) error {
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS payloads (
+		id TEXT PRIMARY KEY,
+		filename TEXT NOT NULL,
+		size INTEGER NOT NULL DEFAULT 0,
+		status TEXT DEFAULT 'completed',
+		temp_path TEXT,
+		config TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	`
 

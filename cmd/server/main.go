@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,7 +19,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"github.com/spf13/viper"
 
 	"rat-c2-server/internal/agent"
@@ -35,6 +38,14 @@ var (
 	buildTime = "unknown"
 	gitCommit = "unknown"
 )
+
+// buildTimeStamp is set at process start so every served index.html carries a
+// unique cache-busting query on its asset URLs (forces a fresh bundle load).
+var buildTimeStamp = time.Now().Unix()
+
+// assetTagRegex matches the opening quote + /assets/ path inside src/href
+// attributes so we can append ?v= while keeping the surrounding quotes intact.
+var assetTagRegex = regexp.MustCompile(`="(/assets/[^"]+)"`)
 
 type Server struct {
 	config      *config.Config
@@ -153,6 +164,20 @@ func (s *Server) setupAPIServer() {
 
 	r := gin.Default()
 
+	// Cache policy: never cache index.html (so new builds always load),
+	// allow long caching on content-hashed assets (they change name on rebuild).
+	r.Use(func(c *gin.Context) {
+		c.Header("Referrer-Policy", "no-referrer")
+		if c.Request.URL.Path == "/" || c.Request.URL.Path == "/index.html" {
+			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+		} else if len(c.Request.URL.Path) > 8 && c.Request.URL.Path[:8] == "/assets/" {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	})
+
 	// CORS
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -165,12 +190,31 @@ func (s *Server) setupAPIServer() {
 
 	// Static files for web dashboard
 	r.Static("/assets", "./web/dist/assets")
-	r.StaticFile("/", "./web/dist/index.html")
+	// Serve index.html via handler so we can inject a cache-busting query
+	// on the bundled asset URLs (guarantees a fresh load after every rebuild).
+	serveIndex := func(c *gin.Context) {
+		data, err := os.ReadFile("./web/dist/index.html")
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		// buildTime is a unix-second stamp; changes on each server restart,
+		// which is enough to bust a cached HTML that points at an old bundle.
+		v := strconv.FormatInt(buildTimeStamp, 10)
+		html := assetTagRegex.ReplaceAll(data, []byte(`="$1?v=`+v+`"`))
+		c.Data(http.StatusOK, "text/html; charset=utf-8", html)
+	}
+	r.GET("/", serveIndex)
 	r.NoRoute(func(c *gin.Context) {
-		c.File("./web/dist/index.html")
+		if c.Request.Method == http.MethodGet && !strings.HasPrefix(c.Request.URL.Path, "/api") {
+			serveIndex(c)
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 	})
 
 	// API routes
+	api.SetDB(s.db)
 	api.RegisterRoutes(r, s.agentMgr, s.taskQueue, s.fileMgr, s.lateralMgr, s.evasionMgr, s.wsHub, s.config)
 
 	s.apiServer = &http.Server{

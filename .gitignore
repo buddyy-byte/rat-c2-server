@@ -1,0 +1,30 @@
+# Build artifacts
+/dist/rat-c2-server.exe
+/dist/rat-c2-server.exe~
+/dist/data/
+/dist/*.db
+/dist/*.db-*
+/payloads/
+*.exe~
+*.db
+*.db-*
+
+# Runtime / logs
+server.log
+*.log
+
+# Local data
+/data/ratc2.db
+/data/ratc2.db-*
+/data/files/
+/data/screenshots/
+/c2_report.txt
+
+# Frontend
+web/node_modules/
+web/dist/
+*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db

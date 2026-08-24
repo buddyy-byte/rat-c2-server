@@ -45,8 +45,7 @@ class APIService {
 
   // Auth
   async login(username: string, password: string) {
-    const res = await this.client.post<LoginResponse>('/auth/login', { username, password })
-    const data = res.data
+    const data = await this.client.post<LoginResponse>('/auth/login', { username, password }) as unknown as LoginResponse
     if (data.token) localStorage.setItem('auth_token', data.token)
     return data
   }

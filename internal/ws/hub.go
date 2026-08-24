@@ -1,10 +1,13 @@
 package ws
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -559,13 +562,25 @@ func (h *Hub) handleScreenshot(agentID string, payload json.RawMessage) {
 		Height   int    `json:"height"`
 		Size     int    `json:"size"`
 		Checksum string `json:"checksum"`
+		Data     string `json:"data"` // base64-encoded PNG bytes
 	}
 	json.Unmarshal(payload, &shot)
 
+	id := uuid.New().String()
+	dir := "data/screenshots"
+	os.MkdirAll(dir, 0755)
+	filePath := filepath.Join(dir, id+".png")
+
+	if shot.Data != "" {
+		if raw, decErr := base64.StdEncoding.DecodeString(shot.Data); decErr == nil {
+			os.WriteFile(filePath, raw, 0644)
+		}
+	}
+
 	h.db.Exec(`
-		INSERT INTO screenshots (id, agent_id, filename, width, height, size, checksum)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, uuid.New().String(), agentID, shot.Filename, shot.Width, shot.Height, shot.Size, shot.Checksum)
+		INSERT INTO screenshots (id, agent_id, filename, file_path, width, height, size, checksum)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, agentID, shot.Filename, filePath, shot.Width, shot.Height, shot.Size, shot.Checksum)
 
 	h.broadcastAgentUpdate(agentID)
 }

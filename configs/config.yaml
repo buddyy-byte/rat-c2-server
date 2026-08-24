@@ -1,0 +1,34 @@
+server:
+  api_addr: "0.0.0.0:8080"
+  ws_addr: "0.0.0.0:8081"
+  tls_enabled: false
+  debug: true
+
+database:
+  path: "./data/ratc2.db"
+
+file_storage:
+  path: "./data/files"
+  max_file_size: 314572800
+  chunk_size: 65536
+  retention_hours: 168
+
+security:
+  api_key: ""
+  jwt_secret: "change-me-in-production"
+  token_expiry: 3600
+  rate_limit: 100
+  allowed_ips: []
+  require_auth: true
+  encryption_key: ""
+
+lateral:
+  default_timeout: 30
+  max_concurrent: 10
+  tools_path: "./tools"
+
+server.domain_front:
+  enabled: false
+  front_domain: ""
+  front_host: ""
+  custom_headers: {}

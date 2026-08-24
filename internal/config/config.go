@@ -17,48 +17,48 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	APIAddr      string
-	WSAddr       string
-	TLSEnabled   bool
-	TLSCert      string
-	TLSKey       string
-	ClientCA     string
-	DomainFront  DomainFrontConfig
-	Debug        bool
+	APIAddr      string             `mapstructure:"api_addr"`
+	WSAddr       string             `mapstructure:"ws_addr"`
+	TLSEnabled   bool               `mapstructure:"tls_enabled"`
+	TLSCert      string             `mapstructure:"tls_cert"`
+	TLSKey       string             `mapstructure:"tls_key"`
+	ClientCA     string             `mapstructure:"client_ca"`
+	DomainFront  DomainFrontConfig  `mapstructure:"domain_front"`
+	Debug        bool               `mapstructure:"debug"`
 }
 
 type DomainFrontConfig struct {
-	Enabled       bool
-	FrontDomain   string
-	FrontHost     string
-	CustomHeaders map[string]string
+	Enabled       bool              `mapstructure:"enabled"`
+	FrontDomain   string            `mapstructure:"front_domain"`
+	FrontHost     string            `mapstructure:"front_host"`
+	CustomHeaders map[string]string `mapstructure:"custom_headers"`
 }
 
 type DatabaseConfig struct {
-	Path string
+	Path string `mapstructure:"path"`
 }
 
 type FileStorageConfig struct {
-	Path           string
-	MaxFileSize    int64
-	ChunkSize      int
-	RetentionHours int
+	Path           string `mapstructure:"path"`
+	MaxFileSize    int64  `mapstructure:"max_file_size"`
+	ChunkSize      int    `mapstructure:"chunk_size"`
+	RetentionHours int    `mapstructure:"retention_hours"`
 }
 
 type SecurityConfig struct {
-	APIKey         string
-	JWTSecret      string
-	TokenExpiry    int
-	RateLimit      int
-	AllowedIPs     []string
-	RequireAuth    bool
-	EncryptionKey  string
+	APIKey         string   `mapstructure:"api_key"`
+	JWTSecret      string   `mapstructure:"jwt_secret"`
+	TokenExpiry    int      `mapstructure:"token_expiry"`
+	RateLimit      int      `mapstructure:"rate_limit"`
+	AllowedIPs     []string `mapstructure:"allowed_ips"`
+	RequireAuth    bool     `mapstructure:"require_auth"`
+	EncryptionKey  string   `mapstructure:"encryption_key"`
 }
 
 type LateralConfig struct {
-	DefaultTimeout int
-	MaxConcurrent  int
-	ToolsPath      string
+	DefaultTimeout int    `mapstructure:"default_timeout"`
+	MaxConcurrent  int    `mapstructure:"max_concurrent"`
+	ToolsPath      string `mapstructure:"tools_path"`
 }
 
 func Load() *Config {
@@ -109,7 +109,7 @@ func setDefaults() {
 	viper.SetDefault("database.path", "./data/ratc2.db")
 
 	viper.SetDefault("file_storage.path", "./data/files")
-	viper.SetDefault("file_storage.max_file_size", 100*1024*1024) // 100MB
+	viper.SetDefault("file_storage.max_file_size", 300*1024*1024) // 300MB
 	viper.SetDefault("file_storage.chunk_size", 64*1024)         // 64KB
 	viper.SetDefault("file_storage.retention_hours", 168)         // 7 days
 

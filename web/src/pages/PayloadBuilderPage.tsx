@@ -248,6 +248,10 @@ export function PayloadBuilderPage() {
                         </p>
                       </div>
                     </div>
+
+                    <div className="text-dark-500 text-xs mt-2">
+                      Maximum size: 300MB
+                    </div>
                     <Button variant="ghost" size="sm" onClick={removeFile}>
                       <X className="w-4 h-4" />
                     </Button>
