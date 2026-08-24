@@ -130,7 +130,11 @@ class APIService {
 
   // Payload builder
   async buildPayload(formData: FormData): Promise<any> {
-    const res = await this.client.post('/payloads/build', formData)
+    // Let axios set the multipart boundary itself — do NOT force a content-type,
+    // otherwise the boundary is missing and the server can't parse the form.
+    const res = await this.client.post('/payloads/build', formData, {
+      headers: { 'Content-Type': undefined },
+    })
     return res
   }
 
