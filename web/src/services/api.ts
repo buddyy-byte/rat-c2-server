@@ -128,7 +128,35 @@ class APIService {
     return this.client.get(`/agents/${agentId}/files/list`, { params: { path } })
   }
 
-  // Credentials
+  // Payload builder
+  async buildPayload(formData: FormData): Promise<any> {
+    const res = await this.client.post('/payloads/build', formData)
+    return res
+  }
+
+  async getPayloadHistory(): Promise<any[]> {
+    return this.client.get('/payloads/history')
+  }
+
+  async downloadPayload(id: string, filename: string) {
+    const response = await fetch(`/api/payloads/${id}/download`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+    })
+    if (!response.ok) throw new Error('Download failed')
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  }
+
+  async deletePayload(id: string) {
+    return this.client.delete(`/payloads/${id}`)
+  }
   async getCredentials(agentId: string): Promise<Credential[]> {
     return this.client.get(`/agents/${agentId}/credentials`)
   }

