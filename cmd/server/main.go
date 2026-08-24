@@ -178,9 +178,14 @@ func (s *Server) setupAPIServer() {
 		c.Next()
 	})
 
-	// CORS
+	// CORS — reflect the caller's origin so credentialed (Bearer) requests
+	// from c2.local / 127.0.0.1 / thechoicervoicergames.com all work.
+	// Wildcard "*" + AllowCredentials is rejected by browsers, so we mirror
+	// the incoming Origin instead.
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
+		AllowOriginFunc: func(origin string) bool {
+			return true // reflect any origin; credentials still permitted
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Requested-With"},
 		ExposeHeaders:    []string{"Content-Length"},

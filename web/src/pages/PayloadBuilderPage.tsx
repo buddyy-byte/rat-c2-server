@@ -103,9 +103,10 @@ export function PayloadBuilderPage() {
         message: `${fileInfo?.name} wrapped -> ${config.c2Host}`
       })
 
-      loadHistory()
+      // Fire-and-forget history refresh; never let a history hiccup mask a good build.
+      loadHistory().catch(() => {})
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Build failed')
+      setError(err instanceof Error ? err.message : (typeof err === 'string' ? err : 'Build failed'))
       setBuildStatus('Build failed')
     } finally {
       setBuilding(false)
