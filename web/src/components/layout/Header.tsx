@@ -1,161 +1,118 @@
-import { useStore } from '@/stores/useStore'
-import { Bell, Search, User, LogOut, Menu, Moon, Sun, RefreshCw, Wifi, WifiOff } from 'lucide-react'
-import { useState } from 'react'
-import clsx from 'clsx'
+import * as React from "react"
+import { cn } from "@/lib/utils"
+import { motion } from "framer-motion"
+import { Search, Bell, Moon, Sun, Menu, X, Command, User, LogOut, Settings, RefreshCw } from "lucide-react"
+import { Button } from "@/components/ui/Button"
+import { useAuthStore } from "@/stores/authStore"
+import { useTheme } from "@/hooks/useTheme"
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/DropdownMenu"
+import { Input } from "@/components/ui/Input"
 
 export function Header() {
-  const { sidebarOpen, toggleSidebar, agents, notifications, removeNotification } = useStore()
-  const [showNotifications, setShowNotifications] = useState(false)
-  const [showUserMenu, setShowUserMenu] = useState(false)
+  const { isAuthenticated, user, logout } = useAuthStore()
+  const { theme, toggleTheme } = useTheme()
+  const [searchQuery, setSearchQuery] = React.useState('')
+  const [commandOpen, setCommandOpen] = React.useState(false)
 
-  const connected = agents.some(a => a.status === 'online')
-  const unreadCount = notifications.filter((n) => !n.read).length
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setCommandOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   return (
-    <header className="sticky top-0 z-30 bg-dark-900/80 backdrop-blur-sm border-b border-dark-800">
-      <div className="flex items-center justify-between h-16 px-6">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={toggleSidebar}
-            className={clsx(
-              'p-2 rounded-lg text-dark-400 hover:bg-dark-800 hover:text-dark-100 transition-colors',
-              !sidebarOpen && 'lg:hidden'
-            )}
-            aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+    <header className="sticky top-0 z-30 h-16 bg-dark-900/80 backdrop-blur-xl border-b border-dark-700">
+      <div className="flex h-full items-center justify-between px-4 md:px-6 lg:px-8 ml-20 lg:ml-64 transition-all duration-300">
+        {/* Left: Search / Command Palette */}
+        <div className="flex items-center gap-4 flex-1 max-w-xl">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setCommandOpen(true)}
+            className="hidden md:flex text-dark-400 hover:text-accent-400"
+            aria-label="Open command palette (⌘K)"
           >
-            <Menu className="w-5 h-5" />
-          </button>
-
-          <div className="hidden sm:flex items-center gap-2 bg-dark-800/50 border border-dark-700 rounded-lg px-4 py-2">
-            <Search className="w-4 h-4 text-dark-500" />
-            <input
-              type="text"
-              placeholder="Search agents, tasks, files..."
-              className="bg-transparent border-none outline-none text-dark-100 placeholder-dark-500 w-64"
-              aria-label="Search"
+            <Command className="w-5 h-5" />
+            <span className="sr-only">Command Palette</span>
+          </Button>
+          
+          <div className="relative flex-1 max-w-md hidden md:block">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" aria-hidden="true" />
+            <Input
+              type="search"
+              placeholder="Search agents, tasks, files... (⌘K)"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 bg-dark-800/50 hover:bg-dark-800 focus:bg-dark-800"
+              aria-label="Global search"
             />
           </div>
         </div>
 
+        {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* Connection status */}
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-dark-800/50 border border-dark-700">
-            <span
-              className={clsx(
-                'w-2 h-2 rounded-full',
-                connected ? 'bg-green-500' : 'bg-red-500'
-              )}
-            />
-            <span className="text-xs font-medium text-dark-300">
-              {connected ? 'Live' : 'Offline'}
-            </span>
-          </div>
+          {/* Theme Toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            className="text-dark-400 hover:text-accent-400"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </Button>
 
           {/* Notifications */}
-          <div className="relative">
-            <button
-              onClick={() => setShowNotifications(!showNotifications)}
-              className={clsx(
-                'relative p-2 rounded-lg text-dark-400 hover:bg-dark-800 hover:text-dark-100 transition-colors',
-                unreadCount > 0 && 'text-accent-400'
-              )}
-              aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
-            >
-              <Bell className="w-5 h-5" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
+          <Button variant="ghost" size="icon" className="text-dark-400 hover:text-accent-400 relative" aria-label="Notifications">
+            <Bell className="w-5 h-5" />
+            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" aria-hidden="true" />
+          </Button>
 
-            {showNotifications && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-dark-900 border border-dark-700 rounded-xl shadow-xl overflow-hidden animate-fade-in">
-                <div className="px-4 py-3 border-b border-dark-700 flex items-center justify-between">
-                  <h3 className="font-medium text-dark-100">Notifications</h3>
-                  {notifications.length > 0 && (
-                    <button
-                      onClick={() => notifications.forEach((n) => removeNotification(n.id))}
-                      className="text-xs text-accent-400 hover:text-accent-300"
-                    >
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {notifications.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-dark-500">
-                      No notifications
-                    </div>
-                  ) : (
-                    notifications.map((n) => (
-                      <div
-                        key={n.id}
-                        className={clsx(
-                          'px-4 py-3 border-b border-dark-800/50 hover:bg-dark-800/50 flex items-start gap-3',
-                          !n.read && 'bg-accent-900/10'
-                        )}
-                        onClick={() => removeNotification(n.id)}
-                      >
-                        <div
-                          className={clsx(
-                            'w-2 h-2 mt-2 rounded-full flex-shrink-0',
-                            n.type === 'success' && 'bg-green-500',
-                            n.type === 'error' && 'bg-red-500',
-                            n.type === 'warning' && 'bg-yellow-500',
-                            n.type === 'info' && 'bg-blue-500'
-                          )}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-dark-100">{n.message}</p>
-                          <p className="text-xs text-dark-500 mt-1">Just now</p>
-                        </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeNotification(n.id); }}
-                          className="text-dark-500 hover:text-dark-300"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Refresh */}
+          <Button variant="ghost" size="icon" className="text-dark-400 hover:text-accent-400" aria-label="Refresh data">
+            <RefreshCw className="w-5 h-5" />
+          </Button>
 
-          {/* User menu */}
-          <div className="relative">
-            <button
-              onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center gap-2 p-2 rounded-lg hover:bg-dark-800 transition-colors"
-              aria-label="User menu"
-            >
-              <div className="w-8 h-8 rounded-full bg-accent-600 flex items-center justify-center">
-                <User className="w-5 h-5 text-white" />
-              </div>
-              <span className="hidden sm:block text-sm font-medium text-dark-100">Operator</span>
-            </button>
-
-            {showUserMenu && (
-              <div className="absolute right-0 top-full mt-2 w-48 bg-dark-900 border border-dark-700 rounded-xl shadow-xl overflow-hidden animate-fade-in">
-                <div className="px-4 py-3 border-b border-dark-700">
-                  <p className="text-sm font-medium text-dark-100">Operator</p>
-                  <p className="text-xs text-dark-500">admin@rat-c2.local</p>
+          {/* User Menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative h-10 w-10 rounded-full text-dark-400 hover:text-accent-400">
+                <div className="relative w-8 h-8 rounded-full bg-gradient-to-br from-accent-500 to-purple-600 flex items-center justify-center">
+                  <User className="w-4 h-4 text-white" />
                 </div>
-                <button
-                  onClick={() => {
-                    localStorage.removeItem('auth_token')
-                    window.location.href = '/login'
-                  }}
-                  className="w-full px-4 py-2 text-left text-sm text-dark-300 hover:bg-dark-800 hover:text-dark-100 flex items-center gap-2"
-                >
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56 bg-dark-900 border-dark-700" align="end" forceMount>
+              <DropdownMenuLabel className="text-dark-300">Account</DropdownMenuLabel>
+              <DropdownMenuItem className="text-dark-100 hover:bg-accent-500/10">
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4" />
+                  <span>Profile</span>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-dark-100 hover:bg-accent-500/10">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4" />
+                  <span>Settings</span>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-dark-700" />
+              <DropdownMenuItem 
+                className="text-red-400 hover:bg-red-500/10 focus:text-red-400"
+                onClick={logout}
+              >
+                <div className="flex items-center gap-2">
                   <LogOut className="w-4 h-4" />
-                  Sign out
-                </button>
-              </div>
-            )}
-          </div>
+                  <span>Log out</span>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </header>

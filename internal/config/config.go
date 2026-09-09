@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,11 +10,11 @@ import (
 )
 
 type Config struct {
-	Server      ServerConfig
-	Database    DatabaseConfig
-	FileStorage FileStorageConfig
-	Security    SecurityConfig
-	Lateral     LateralConfig
+	Server      ServerConfig      `mapstructure:"server"`
+	Database    DatabaseConfig    `mapstructure:"database"`
+	FileStorage FileStorageConfig `mapstructure:"file_storage"`
+	Security    SecurityConfig    `mapstructure:"security"`
+	Lateral     LateralConfig     `mapstructure:"lateral"`
 }
 
 type ServerConfig struct {
@@ -142,7 +143,20 @@ func resolvePath(path string) string {
 	exe, err := os.Executable()
 	if err == nil {
 		base := filepath.Dir(exe)
-		return filepath.Join(base, path)
+		resolved := filepath.Join(base, path)
+		log.Printf("[resolvePath] path=%s exe=%s base=%s resolved=%s", path, exe, base, resolved)
+		if _, err := os.Stat(resolved); err == nil {
+			return resolved
+		}
+		// Fallback: try relative to working directory
+		cwd, _ := os.Getwd()
+		resolved2 := filepath.Join(cwd, path)
+		log.Printf("[resolvePath] fallback cwd=%s resolved2=%s", cwd, resolved2)
+		return resolved2
 	}
-	return path
+	// Fallback: try relative to working directory
+	cwd, _ := os.Getwd()
+	resolved := filepath.Join(cwd, path)
+	log.Printf("[resolvePath] no exe cwd=%s resolved=%s", cwd, resolved)
+	return resolved
 }

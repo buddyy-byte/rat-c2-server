@@ -1,72 +1,50 @@
-'use client'
+import * as React from "react"
+import { cn } from "@/lib/utils"
+import { motion } from "framer-motion"
 
-import { useEffect, useRef } from 'react'
-
-interface GradientBackgroundProps {
-  colors?: string[]
-  speed?: number
+interface GradientBackgroundProps extends React.HTMLAttributes<HTMLDivElement> {
+  children: React.ReactNode
   className?: string
-  style?: React.CSSProperties
-  children?: React.ReactNode
 }
 
-export function GradientBackground({
-  colors = ['#0f172a', '#1e1b4b', '#312e81', '#1e1b4b', '#0f172a'],
-  speed = 0.1,
-  className = '',
-  style = {},
-  children,
-}: GradientBackgroundProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const animationRef = useRef<number>()
-  const [position, setPosition] = useState(0)
-
-  useEffect(() => {
-    let pos = 0
-    const animate = () => {
-      pos += speed * 0.001
-      if (pos > 1) pos = 0
-      setPosition(pos)
-      animationRef.current = requestAnimationFrame(animate)
-    }
-    animationRef.current = requestAnimationFrame(animate)
-    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current) }
-  }, [speed])
-
-  const gradientStops = colors.map((c, i) => `${c} ${(i / (colors.length - 1)) * 100}%`).join(', ')
-
+export function GradientBackground({ children, className, ...props }: GradientBackgroundProps) {
   return (
-    <div
-      ref={containerRef}
-      className={`relative overflow-hidden ${className}`}
-      style={{
-        ...style,
-        background: `linear-gradient(${position * 360}deg, ${gradientStops})`,
-        backgroundSize: '400% 400%',
-      }}
-    >
-      {children}
-      {/* Overlay noise texture */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-          opacity: 0.03,
-          mixBlendMode: 'overlay',
-        }}
-        aria-hidden="true"
-      />
-      {/* Radial glow */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `radial-gradient(ellipse at 50% 50%, ${colors[2]}40 0%, transparent 70%)`,
-          mixBlendMode: 'screen',
-        }}
-        aria-hidden="true"
-      />
+    <div className={cn("relative min-h-screen bg-dark-950", className)} {...props}>
+      {/* Mesh gradient background */}
+      <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+        <motion.div
+          className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-accent-500/10 blur-3xl"
+          animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.5, 0.3] }}
+          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.div
+          className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full bg-purple-500/10 blur-3xl"
+          animate={{ scale: [1, 1.05, 1], opacity: [0.2, 0.4, 0.2] }}
+          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 2 }}
+        />
+        <motion.div
+          className="absolute top-1/2 left-1/2 w-[400px] h-[400px] rounded-full bg-accent-500/5 blur-3xl"
+          animate={{ scale: [1, 1.15, 1], opacity: [0.1, 0.3, 0.1] }}
+          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut", delay: 4 }}
+        />
+      </div>
+      
+      {/* Grid pattern overlay */}
+      <div className="absolute inset-0 -z-10 opacity-20" aria-hidden="true">
+        <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <defs>
+            <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+              <path d="M 10 0 L 0 0 0 10" fill="none" stroke="currentColor" strokeWidth="0.5" />
+            </pattern>
+          </defs>
+          <rect width="100" height="100" fill="url(#grid)" />
+        </svg>
+      </div>
+
+      {/* Subtle vignette */}
+      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-transparent via-transparent to-dark-950/50 pointer-events-none" />
+
+      <div className="relative z-0">{children}</div>
     </div>
   )
 }
-
-import { useState } from 'react'

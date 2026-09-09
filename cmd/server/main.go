@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -139,6 +140,11 @@ func main() {
 			}
 		}
 	}()
+
+	// Serve agent binaries (Windows + Linux) on :8082
+	agentBinaryPath := filepath.Join(cfg.FileStorage.Path, "agent.exe")
+	log.Printf("[Main] Agent binary path: %s (FileStorage.Path=%s)", agentBinaryPath, cfg.FileStorage.Path)
+	go api.ServeAgentBinary(fileMgr, ":8082", agentBinaryPath)
 
 	// Wait for interrupt
 	sigCh := make(chan os.Signal, 1)

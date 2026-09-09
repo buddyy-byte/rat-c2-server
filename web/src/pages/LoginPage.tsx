@@ -1,111 +1,217 @@
-import { useState } from 'react'
-import { GradientBackground } from '@/components/ui/GradientBackground'
+import * as React from "react"
+import { motion } from "framer-motion"
 import { GradientText } from '@/components/ui/GradientText'
-import { DotGrid } from '@/components/ui/DotGrid'
-import { Card, CardHeader, CardBody } from '@/components/ui/Card'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { useStore } from '@/stores/useStore'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
+import { useAuthStore } from '@/stores/authStore'
 import { api } from '@/services/api'
-import { Lock, Unlock, AlertCircle } from 'lucide-react'
-import clsx from 'clsx'
+import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
+import { Lock, User, Mail, Eye, EyeOff, Loader2, CheckCircle, AlertCircle, Key, Shield, Terminal } from "lucide-react"
+import { cn } from '@/lib/utils'
 
 export function LoginPage() {
-  const { addNotification, setConnected } = useStore()
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
+  const navigate = useNavigate()
+  const { login, register, loading } = useAuthStore()
+  const [isRegister, setIsRegister] = React.useState(false)
+  const [showPassword, setShowPassword] = React.useState(false)
+  const [username, setUsername] = React.useState('')
+  const [password, setPassword] = React.useState('')
+  const [email, setEmail] = React.useState('')
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username || !password) return
-
-    setLoading(true)
     try {
-      await api.login(username, password)
-      setConnected(true)
-      addNotification({ type: 'success', message: 'Logged in successfully' })
-      window.location.href = '/agents'
+      if (isRegister) {
+        await register(username, password)
+      } else {
+        await login(username, password)
+      }
+      toast.success(isRegister ? 'Account created!' : 'Welcome back!')
+      navigate('/')
     } catch (error) {
-      addNotification({ type: 'error', message: `Login failed: ${error}` })
-    } finally {
-      setLoading(false)
+      toast.error(error instanceof Error ? error.message : 'Authentication failed')
     }
   }
 
   return (
-    <GradientBackground className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <Card className="relative overflow-hidden bg-dark-900/80 border-dark-700">
-          <DotGrid className="absolute inset-0 opacity-10" dotSize={2} gap={20} baseColor="#0f172a" activeColor="#d946ef" proximity={100} />
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="w-full max-w-md"
+      >
+        {/* Background decoration */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-accent-500/10 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl" />
+        </div>
 
-          <div className="relative p-8 space-y-6">
-            <div className="text-center">
-              <div className="relative w-16 h-16 mx-auto mb-4 rounded-2xl bg-dark-800/50 border border-dark-700 flex items-center justify-center overflow-hidden">
-                <DotGrid className="absolute inset-0" dotSize={2} gap={10} baseColor="#0f172a" activeColor="#d946ef" proximity={60} />
-                <Lock className="w-8 h-8 text-accent-400 relative z-10" />
-              </div>
-              <GradientText className="text-3xl font-bold" colors={['#f8fafc', '#d946ef', '#a855f7']}>
-                ENI C2 Dashboard
-              </GradientText>
-              <p className="text-dark-400 mt-2 text-sm">Sign in to access your command center</p>
+        <div className="relative z-10">
+          {/* Logo */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="text-center mb-8"
+          >
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-500 to-purple-600 mb-4">
+              <Terminal className="w-8 h-8 text-white" />
             </div>
+            <GradientText className="text-3xl font-bold" colors={['#fff', '#d946ef', '#a855f7']}>
+              RATC2
+            </GradientText>
+            <p className="text-dark-400 mt-1">Command & Control Framework</p>
+          </motion.div>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm text-dark-400 mb-1">Username</label>
-                <div className="relative">
-                  <Unlock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
-                  <Input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter username"
-                    className="pl-10"
-                    autoFocus
-                  />
+          {/* Form Card */}
+          <Card className="card-hover">
+            <CardContent className="p-6">
+              <Tabs value={isRegister ? 'register' : 'login'} onValueChange={v => setIsRegister(v === 'register')} className="w-full">
+                <TabsList className="grid w-full grid-cols-2 bg-dark-800/50 p-1 rounded-lg border border-dark-700 mb-6">
+                  <TabsTrigger value="login" className="gap-2">
+                    <Lock className="w-4 h-4" />
+                    <span>Sign In</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="register" className="gap-2">
+                    <User className="w-4 h-4" />
+                    <span>Register</span>
+                  </TabsTrigger>
+                </TabsList>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {isRegister && (
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <div className="relative">
+                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                        <Input
+                          id="email"
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="admin@example.com"
+                          className="pl-10"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="username">Username</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                      <Input
+                        id="username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="Enter username"
+                        className="pl-10"
+                        required
+                        autoComplete={isRegister ? 'new-password' : 'username'}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                      <Input
+                        id="password"
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter password"
+                        className="pl-10 pr-10"
+                        required
+                        autoComplete={isRegister ? 'new-password' : 'current-password'}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Button type="submit" className="w-full" size="lg" disabled={loading}>
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        {isRegister ? 'Creating Account...' : 'Signing In...'}
+                      </>
+                    ) : isRegister ? (
+                      <>
+                        <User className="w-5 h-5 mr-2" />
+                        Create Account
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-5 h-5 mr-2" />
+                        Sign In
+                      </>
+                    )}
+                  </Button>
+                </form>
+
+                <div className="mt-6 text-center">
+                  <p className="text-sm text-dark-400">
+                    {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-accent-400 hover:text-accent-300 p-0"
+                      onClick={() => setIsRegister(!isRegister)}
+                    >
+                      {isRegister ? 'Sign In' : 'Register'}
+                    </Button>
+                  </p>
                 </div>
-              </div>
+              </Tabs>
 
-              <div>
-                <label className="block text-sm text-dark-400 mb-1">Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                    className="pl-10 pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-200"
-                  >
-                    {showPassword ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                  </button>
+              {/* Demo credentials */}
+              <div className="mt-6 p-4 bg-dark-800/50 rounded-lg border border-dark-700">
+                <p className="text-xs text-dark-500 text-center mb-2">Demo Credentials</p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded">admin</div>
+                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded">admin123</div>
                 </div>
+                <p className="text-xs text-dark-500 text-center mt-2">Click to auto-fill</p>
               </div>
+            </CardContent>
+          </Card>
 
-              <Button type="submit" className="w-full" disabled={loading} size="lg">
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                    Signing in...
-                  </>
-                ) : (
-                  'Sign In'
-                )}
-              </Button>
-            </form>
-
-            <div className="text-center text-sm text-dark-500">
-              <p>Default: <code className="font-mono bg-dark-800 px-1 rounded">admin</code> / <code className="font-mono bg-dark-800 px-1 rounded">admin</code></p>
+          {/* Features */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.4 }}
+            className="mt-8 grid grid-cols-3 gap-4 text-center"
+          >
+            <div className="p-4 bg-dark-800/50 rounded-xl border border-dark-700">
+              <Shield className="w-6 h-6 text-accent-400 mx-auto mb-2" />
+              <p className="text-xs text-dark-400">Evasion Techniques</p>
             </div>
-          </div>
-        </Card>
-      </div>
-    </GradientBackground>
+            <div className="p-4 bg-dark-800/50 rounded-xl border border-dark-700">
+              <Key className="w-6 h-6 text-accent-400 mx-auto mb-2" />
+              <p className="text-xs text-dark-400">Encrypted Comms</p>
+            </div>
+            <div className="p-4 bg-dark-800/50 rounded-xl border border-dark-700">
+              <Terminal className="w-6 h-6 text-accent-400 mx-auto mb-2" />
+              <p className="text-xs text-dark-400">Full Control</p>
+            </div>
+          </motion.div>
+        </div>
+      </motion.div>
+    </div>
   )
 }

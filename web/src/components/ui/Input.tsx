@@ -1,46 +1,23 @@
-import { forwardRef } from 'react'
-import clsx from 'clsx'
+import * as React from "react"
+import { cn } from "@/lib/utils"
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  label?: string
-  error?: string
-}
+interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {}
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, id, ...props }, ref) => {
-    const inputId = id || label?.toLowerCase().replace(/\s+/g, '-')
-
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, type, ...props }, ref) => {
     return (
-      <div className="w-full">
-        {label && (
-          <label htmlFor={inputId} className="block text-sm font-medium text-dark-300 mb-1.5">
-            {label}
-          </label>
+      <input
+        type={type}
+        className={cn(
+          "flex h-10 w-full rounded-lg border border-dark-700 bg-dark-900 px-3 py-2 text-sm text-dark-100 placeholder:text-dark-500 file:border-0 file:bg-transparent file:text-sm file:font-medium focus:outline-none focus:ring-2 focus:ring-accent-500/50 focus:border-accent-500 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
+          className
         )}
-        <input
-          ref={ref}
-          id={inputId}
-          className={clsx(
-            'w-full px-3 py-2 bg-dark-900 border rounded-lg text-dark-100 placeholder-dark-500',
-            'focus:outline-none focus:ring-2 focus:ring-accent-500 focus:border-transparent',
-            'transition-all duration-200',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
-            error && 'border-red-500 focus:ring-red-500',
-            !error && 'border-dark-700',
-            className
-          )}
-          aria-invalid={error ? 'true' : 'false'}
-          aria-describedby={error ? `${inputId}-error` : undefined}
-          {...props}
-        />
-        {error && (
-          <p id={`${inputId}-error`} className="mt-1.5 text-sm text-red-400" role="alert">
-            {error}
-          </p>
-        )}
-      </div>
+        ref={ref}
+        {...props}
+      />
     )
   }
 )
+Input.displayName = "Input"
 
-Input.displayName = 'Input'
+export { Input }

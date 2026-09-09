@@ -12,18 +12,28 @@ export default defineConfig({
   build: {
     outDir: './dist',
     emptyOutDir: true,
-  },
-  server: {
-      port: 3001,
-      proxy: {
-        '/api': {
-          target: 'http://localhost:5000',
-          changeOrigin: true,
-        },
-        '/ws': {
-          target: 'ws://localhost:5000',
-          ws: true,
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          ui: ['lucide-react', 'framer-motion', 'clsx', 'tailwind-merge'],
+          charts: [],
         },
       },
     },
+  },
+  server: {
+    port: 3001,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8081',
+        ws: true,
+      },
+    },
+  },
 })

