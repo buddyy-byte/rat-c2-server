@@ -1,38 +1,35 @@
-FROM golang:1.21-alpine AS builder
+# syntax=docker/dockerfile:1
 
-# Set working directory
+# ---- frontend ----
+FROM node:20-alpine AS frontend
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+# Same-origin API/WS when the Go server serves the built dashboard.
+ENV VITE_API_BASE=""
+ENV VITE_WS_BASE=""
+RUN npm run build
+
+# ---- go builder ----
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
-
-# Copy go modules and sum
 COPY go.mod go.sum ./
-
-# Download dependencies (cached layer)
 RUN go mod download
-
-# Copy all source code
 COPY . .
+RUN CGO_ENABLED=0 go build -ldflags '-s -w' -o app ./cmd/server
 
-# Build the Go binary
-# -tags netgo: pure Go (no CGO), avoids CGO/sqlite3 issues
-# -ldflags: strip binary
-RUN go build -tags netgo -ldflags '-s -w' -o app ./cmd/server
-
-# Final stage: minimal runtime image
-FROM alpine:3.19
-
-# Create app user (non-root)
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-
+# ---- runtime ----
+FROM alpine:3.20
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+    && mkdir -p /app/data /app/data/files /app/web/dist /app/configs \
+    && chown -R appuser:appgroup /app
 WORKDIR /app
-
-# Copy binary from builder
 COPY --from=builder /app/app .
-
-# Expose ports
-EXPOSE 8080 8081
-
-# Set user
+COPY --from=builder /app/configs ./configs
+COPY --from=frontend /web/dist ./web/dist
 USER appuser
-
-# Start the server
+EXPOSE 8080
+ENV PORT=8080
+ENV RATC2_DATABASE_PATH=/app/data/ratc2.db
 CMD ["./app"]

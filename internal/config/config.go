@@ -87,6 +87,22 @@ func Load() *Config {
 		panic("Config unmarshal error: " + err.Error())
 	}
 
+	// Railway/Render/Fly inject PORT and only expose that one public port.
+	// Bind the API (dashboard + HTTP agent beacon) to it so healthchecks work.
+	if p := os.Getenv("PORT"); p != "" {
+		cfg.Server.APIAddr = "0.0.0.0:" + p
+		log.Printf("[config] PORT=%s -> api_addr=%s", p, cfg.Server.APIAddr)
+	}
+	if p := os.Getenv("RATC2_SERVER_API_ADDR"); p != "" {
+		cfg.Server.APIAddr = p
+	}
+	if p := os.Getenv("RATC2_SERVER_WS_ADDR"); p != "" {
+		cfg.Server.WSAddr = p
+	}
+	if p := os.Getenv("RATC2_DATABASE_PATH"); p != "" {
+		cfg.Database.Path = p
+	}
+
 	// Resolve relative paths
 	cfg.Database.Path = resolvePath(cfg.Database.Path)
 	cfg.FileStorage.Path = resolvePath(cfg.FileStorage.Path)

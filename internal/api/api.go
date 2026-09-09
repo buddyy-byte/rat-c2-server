@@ -97,6 +97,17 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	// Separate from WebSocket /ws/agent used by the Rust Linux agent.
 	r.POST("/agent", agentHTTPBeaconHandler(agentMgr))
 	r.POST("/beacon", agentHTTPDataTaskHandler(agentMgr))
+
+	// Health on the public API port — Railway/Render hit this via $PORT.
+	r.GET("/health", func(c *gin.Context) {
+		c.String(http.StatusOK, "OK")
+	})
+
+	// Agent WS on the same public port (Railway only exposes one).
+	// Path is /ws/agent so it never collides with POST /agent.
+	if wsHub != nil {
+		r.GET("/ws/agent", gin.WrapH(http.HandlerFunc(wsHub.HandleAgentWS)))
+	}
 }
 
 func agentHTTPDataTaskHandler(agentMgr *agent.Manager) gin.HandlerFunc {

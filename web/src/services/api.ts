@@ -1,7 +1,7 @@
 import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module, PayloadConfig, BuildResult } from '@/types'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
-const WS_BASE = import.meta.env.VITE_WS_BASE || 'ws://localhost:8081'
+const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? 'http://localhost:8080' : '')
+const WS_BASE = import.meta.env.VITE_WS_BASE ?? (import.meta.env.DEV ? 'ws://localhost:8081' : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
 
 class ApiClient {
   private token: string | null = null
