@@ -580,7 +580,7 @@ export function PayloadBuilderPage() {
                       className="bg-dark-900 border-dark-700"
                     />
                     <p className="text-xs text-dark-500">
-                      {agentFileLabel || 'Upload a compiled Windows x64 agent. Required for Build on Vercel.'}
+                      {agentFileLabel || 'Compile agent/agent.cpp in the VM (compile_vm.bat). Wrap that exe — not the 39MB data/files/agent.exe. That binary never reads the trailer.'}
                     </p>
                   </div>
                   <div className="space-y-4">

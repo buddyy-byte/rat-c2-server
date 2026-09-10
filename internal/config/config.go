@@ -101,6 +101,8 @@ func Load() *Config {
 	}
 	if p := os.Getenv("RATC2_DATABASE_PATH"); p != "" {
 		cfg.Database.Path = p
+	} else if os.Getenv("PORT") != "" {
+		cfg.Database.Path = filepath.Join(os.TempDir(), "umbra.db")
 	}
 
 	// Resolve relative paths

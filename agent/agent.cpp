@@ -50,12 +50,16 @@ typedef void* (__stdcall* t_OpenReq)(void*, const wchar_t*, const wchar_t*, cons
 typedef BOOL (__stdcall* t_SendReq)(void*, const wchar_t*, DWORD, void*, DWORD, DWORD, DWORD_PTR);
 typedef BOOL (__stdcall* t_Recv)(void*, void*, DWORD, LPDWORD);
 typedef BOOL (__stdcall* t_Close)(void*);
-static t_Open    f_open;
-static t_Connect f_connect;
-static t_OpenReq f_openreq;
-static t_SendReq f_sendreq;
-static t_Recv    f_recv;
-static t_Close   f_closeh;
+typedef BOOL (__stdcall* t_RecvResp)(void*, void*);
+typedef BOOL (__stdcall* t_SetOpt)(void*, DWORD, void*, DWORD);
+static t_Open     f_open;
+static t_Connect  f_connect;
+static t_OpenReq  f_openreq;
+static t_SendReq  f_sendreq;
+static t_Recv     f_recv;
+static t_Close    f_closeh;
+static t_RecvResp f_recvresp;
+static t_SetOpt   f_setopt;
 typedef BOOL (WINAPI* t_AsyncKey)(int);
 static t_AsyncKey f_async;
 
@@ -104,12 +108,34 @@ static char* jval(const char* j, const char* key, char* out, int cap) {
 #define WINHTTP_FLAG_SECURE 0x00800000
 #endif
 
+#ifndef WINHTTP_ACCESS_TYPE_NO_PROXY
+#define WINHTTP_ACCESS_TYPE_NO_PROXY 1
+#endif
+#ifndef WINHTTP_OPTION_SECURITY_FLAGS
+#define WINHTTP_OPTION_SECURITY_FLAGS 31
+#endif
+#ifndef WINHTTP_OPTION_SECURE_PROTOCOLS
+#define WINHTTP_OPTION_SECURE_PROTOCOLS 84
+#endif
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
+#endif
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3 0x00002000
+#endif
+
 static void http_post(const char* host, const char* port, const char* path, const char* body, BOOL use_tls) {
     wchar_t wh[128], wp[64];
     MultiByteToWideChar(CP_ACP, 0, host, -1, wh, 128);
     MultiByteToWideChar(CP_ACP, 0, path, -1, wp, 64);
-    void* sess = f_open(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 0, NULL, NULL, 0);
+    // NO_PROXY: DEFAULT_PROXY (0) hangs on WPAD in VMs and the POST never leaves.
+    void* sess = f_open(L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
     if (!sess) return;
+    if (use_tls && f_setopt) {
+        DWORD proto = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+        f_setopt(sess, WINHTTP_OPTION_SECURE_PROTOCOLS, &proto, sizeof(proto));
+    }
     INTERNET_PORT nport = (INTERNET_PORT)atoi(port);
     if (!nport) nport = use_tls ? 443 : 80;
     void* conn = f_connect(sess, wh, nport, 0);
@@ -117,10 +143,16 @@ static void http_post(const char* host, const char* port, const char* path, cons
         DWORD flags = use_tls ? WINHTTP_FLAG_SECURE : 0;
         void* req = f_openreq(conn, L"POST", wp, NULL, NULL, NULL, flags, 0);
         if (req) {
+            if (use_tls && f_setopt) {
+                DWORD sec = 0x00000100 | 0x00000200 | 0x00001000 | 0x00002000;
+                f_setopt(req, WINHTTP_OPTION_SECURITY_FLAGS, &sec, sizeof(sec));
+            }
             DWORD blen = (DWORD)lstrlenA(body);
-            f_sendreq(req, L"Content-Type: application/json", -1, (void*)body, blen, blen, 0);
-            char tmp[16]; DWORD got = 0;
-            if (f_recv) f_recv(req, tmp, sizeof(tmp), &got);
+            if (f_sendreq(req, L"Content-Type: application/json\r\n", -1, (void*)body, blen, blen, 0)) {
+                if (f_recvresp) f_recvresp(req, NULL);
+                char tmp[64]; DWORD got = 0;
+                if (f_recv) f_recv(req, tmp, sizeof(tmp), &got);
+            }
             f_closeh(req);
         }
         f_closeh(conn);
@@ -183,9 +215,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     f_open    = (t_Open)    api(w, "WinHttpOpen");
     f_connect = (t_Connect) api(w, "WinHttpConnect");
     f_openreq = (t_OpenReq) api(w, "WinHttpOpenRequest");
-    f_sendreq = (t_SendReq) api(w, "WinHttpSendRequest");
-    f_recv    = (t_Recv)    api(w, "WinHttpReadData");
-    f_closeh  = (t_Close)   api(w, "WinHttpCloseHandle");
+    f_sendreq  = (t_SendReq)  api(w, "WinHttpSendRequest");
+    f_recv     = (t_Recv)     api(w, "WinHttpReadData");
+    f_closeh   = (t_Close)    api(w, "WinHttpCloseHandle");
+    f_recvresp = (t_RecvResp) api(w, "WinHttpReceiveResponse");
+    f_setopt   = (t_SetOpt)   api(w, "WinHttpSetOption");
     f_async   = (t_AsyncKey)api(u, "GetAsyncKeyState");
     if (!f_open || !f_connect || !f_openreq || !f_sendreq || !f_closeh) return 2;
 
