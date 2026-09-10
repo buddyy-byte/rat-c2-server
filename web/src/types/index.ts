@@ -158,6 +158,9 @@ export interface PayloadConfig {
   AntiDebug: boolean
   AntiVM: boolean
   SleepObfuscation: boolean
+  EncryptedComms: boolean
+  ProcessInjection: boolean
+  InjectionMethod: string
   EncryptionKey: string
   CustomConfig: string
 }

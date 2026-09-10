@@ -304,7 +304,8 @@ class ApiClient {
     form.append('platform', config.Platform)
     form.append('anti_debug', config.AntiDebug ? 'true' : 'false')
     form.append('anti_vm', config.AntiVM ? 'true' : 'false')
-    form.append('key', config.EncryptionKey || '')
+    form.append('key', config.EncryptedComms ? (config.EncryptionKey || '') : '')
+    form.append('injection_method', config.ProcessInjection ? (config.InjectionMethod || 'crt') : 'none')
     form.append('hide_console', 'true')
     if (config.CustomConfig) form.append('custom_config', config.CustomConfig)
 

