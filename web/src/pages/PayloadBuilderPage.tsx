@@ -11,8 +11,8 @@ import { Switch } from '@/components/ui/Switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
 import { cn } from '@/lib/utils'
-import { api } from '@/services/api'
 import type { PayloadConfig, BuildResult } from '@/types'
+import { wrapAgentBinary, sha256Hex } from '@/lib/payloadWrap'
 import {
   Box,
   Download,
@@ -68,39 +68,51 @@ export function PayloadBuilderPage() {
   const [agentFile, setAgentFile] = useState<File | null>(null)
   const [agentFileLabel, setAgentFileLabel] = useState('')
 
+  const randomKey = () =>
+    Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+
   const handleBuild = async () => {
     if (!agentFile) {
       toast.error('Build failed', {
-        description: 'Upload a compiled agent in Advanced, then Build. Vercel has no stored binary.',
+        description: 'Pick a compiled agent in Advanced, then Build. Wrapping is local — the exe never uploads.',
       })
       return
     }
     setBuilding(true)
     setResult(null)
     try {
-      const buildResult = await api.buildPayload(config, agentFile)
-      setResult(buildResult)
-      if (buildResult.Success) {
-        if (buildResult.DownloadB64) {
-          const bin = Uint8Array.from(atob(buildResult.DownloadB64), c => c.charCodeAt(0))
-          const blob = new Blob([bin], { type: 'application/octet-stream' })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = buildResult.BinaryName || 'umbra-windows.exe'
-          document.body.appendChild(a)
-          a.click()
-          a.remove()
-          URL.revokeObjectURL(url)
-        }
-        toast.success('Payload built successfully!', {
-          description: `Binary: ${buildResult.BinaryName} (${(buildResult.Size / 1024).toFixed(1)} KB)`,
-        })
-      } else {
-        toast.error('Build failed', {
-          description: buildResult.Error,
-        })
+      let cfg = { ...config }
+      if (cfg.EncryptedComms && !cfg.EncryptionKey) {
+        cfg = { ...cfg, EncryptionKey: randomKey() }
+        setConfig(cfg)
       }
+      const exe = await agentFile.arrayBuffer()
+      const { bytes } = await wrapAgentBinary(exe, cfg)
+      const name = cfg.Platform === 'linux' ? 'umbra-linux' : (agentFile.name || 'umbra-windows.exe')
+      const blob = new Blob([bytes], { type: 'application/octet-stream' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      const sum = await sha256Hex(bytes)
+      const buildResult: BuildResult = {
+        Success: true,
+        BinaryPath: name,
+        BinaryName: name,
+        Size: bytes.length,
+        Checksum: sum,
+        Error: '',
+      }
+      setResult(buildResult)
+      toast.success('Payload built', {
+        description: `${name} (${(bytes.length / 1024).toFixed(1)} KB) — trailer written, file downloaded`,
+      })
     } catch (error) {
       toast.error('Build failed', {
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -114,19 +126,9 @@ export function PayloadBuilderPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setAgentFile(file)
-    setAgentFileLabel(`${platform}: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`)
-    try {
-      await api.uploadAgentBinary(file, platform)
-      toast.success(`${platform} agent kept for this Build`)
-    } catch {
-      toast.success(`${platform} agent kept locally — will send with Build`)
-    }
+    setAgentFileLabel(`${platform}: ${file.name} (${(file.size / 1024).toFixed(1)} KB) — wraps in the browser`)
+    toast.success(`${platform} agent ready`)
   }
-
-  const randomKey = () =>
-    Array.from(crypto.getRandomValues(new Uint8Array(32)))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
 
   const generateEncryptionKey = () => {
     const key = randomKey()
