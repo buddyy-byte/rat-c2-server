@@ -185,6 +185,7 @@ func (s *Server) setupAPIServer() {
 		}
 		c.Next()
 	})
+	r.Use(api.SecurityHeaders())
 
 	// CORS — reflect the caller's origin so credentialed (Bearer) requests
 	// from c2.local / 127.0.0.1 / thechoicervoicergames.com all work.

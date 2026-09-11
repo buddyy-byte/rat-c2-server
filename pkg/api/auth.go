@@ -172,6 +172,7 @@ func loginHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	ip := clientIP(c)
 	u := strings.TrimSpace(req.Username)
 	p := req.Password
 	role := "operator"
@@ -189,13 +190,15 @@ func loginHandler(c *gin.Context) {
 		if row, found := lookupOperator(u); found && row.Password == hashPass(p) {
 			ok = true
 			u = row.Username
-			touchLogin(u, c.ClientIP())
+			touchLogin(u, ip)
 		}
 	}
 	if !ok {
+		recordAuthFail(ip)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
+	recordAuthOK(ip)
 	c.JSON(http.StatusOK, gin.H{
 		"token": issueToken(u),
 		"user":  gin.H{"username": u, "role": role},
@@ -228,12 +231,7 @@ func registerHandler(c *gin.Context) {
 	}
 	id := uuid.New().String()
 	now := time.Now()
-	ip := c.ClientIP()
-	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-		ip = strings.TrimSpace(strings.Split(xff, ",")[0])
-	} else if xri := c.GetHeader("X-Real-IP"); xri != "" {
-		ip = xri
-	}
+	ip := clientIP(c)
 	if ip != "" && ip != "::1" && ip != "127.0.0.1" {
 		var n int
 		_ = db.Get(&n, `SELECT COUNT(*) FROM operators WHERE last_ip = ?`, ip)

@@ -31,13 +31,19 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const collapsed = useUIStore(s => s.sidebarCollapsed)
   const density = useUIStore(s => s.density)
   const pad = density === 'compact' ? 'p-3 md:p-4' : density === 'spacious' ? 'p-6 md:p-10' : 'p-4 md:p-6 lg:p-8'
+  React.useEffect(() => {
+    document.documentElement.style.setProperty('--sidebar-w', collapsed ? '5rem' : '16rem')
+  }, [collapsed])
   return (
     <GradientBackground>
       <div className="min-h-screen">
         <Sidebar />
-        <div className={cn('min-h-screen flex flex-col transition-[margin] duration-300', collapsed ? 'ml-20' : 'ml-64')}>
+        <div
+          className="min-h-screen flex flex-col transition-[margin-left] duration-300"
+          style={{ marginLeft: 'var(--sidebar-w, 16rem)' }}
+        >
           <Header />
-          <main className={cn('flex-1 overflow-auto', pad)}>
+          <main className={cn('flex-1 overflow-auto min-w-0', pad)}>
             {children}
           </main>
         </div>

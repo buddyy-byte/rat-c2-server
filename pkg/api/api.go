@@ -42,8 +42,8 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	api := r.Group("/api")
 	{
 		// Auth
-		api.POST("/auth/login", loginHandler)
-		api.POST("/auth/register", registerHandler)
+		api.POST("/auth/login", authGuard(), loginHandler)
+		api.POST("/auth/register", authGuard(), registerHandler)
 		api.POST("/auth/logout", logoutHandler)
 		api.GET("/auth/me", meHandler)
 		api.GET("/operators", listOperatorsHandler)

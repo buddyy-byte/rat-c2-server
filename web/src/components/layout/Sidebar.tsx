@@ -85,9 +85,10 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 z-40 h-screen flex flex-col bg-dark-900/95 backdrop-blur-xl border-r border-dark-700 transition-all duration-300',
+        'fixed inset-y-0 left-0 z-40 flex flex-col bg-dark-900/95 backdrop-blur-xl border-r border-dark-700 transition-[width] duration-300 overflow-hidden',
         collapsed ? 'w-20' : 'w-64'
       )}
+      style={{ width: 'var(--sidebar-w, 16rem)' }}
     >
       <div className="flex items-center justify-between h-16 px-4 border-b border-dark-700 shrink-0">
         <Link to="/" className="flex items-center gap-2 min-w-0">

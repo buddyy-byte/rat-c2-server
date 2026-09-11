@@ -29,14 +29,21 @@ export function RegisteredUsersPage() {
   const navigate = useNavigate()
   const { id } = useParams()
 
-  React.useEffect(() => {
+  const load = React.useCallback(() => {
     if (!isOwner) return
-    setLoading(true)
     api.listOperators()
       .then(setRows)
       .catch(() => setRows([]))
       .finally(() => setLoading(false))
   }, [isOwner])
+
+  React.useEffect(() => {
+    if (!isOwner) return
+    setLoading(true)
+    load()
+    const t = setInterval(load, 4000)
+    return () => clearInterval(t)
+  }, [isOwner, load])
 
   if (!isOwner) return <Navigate to="/" replace />
 
@@ -56,10 +63,7 @@ export function RegisteredUsersPage() {
           </GradientText>
           <p className="text-dark-400 mt-1">Owner view — operators created via Register</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => {
-          setLoading(true)
-          api.listOperators().then(setRows).finally(() => setLoading(false))
-        }} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => { setLoading(true); load() }} disabled={loading}>
           <Loader2 className={cn('w-4 h-4', loading && 'animate-spin')} />
           Refresh
         </Button>
