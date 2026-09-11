@@ -68,7 +68,7 @@ export function DashboardPage() {
           <GradientText className="text-3xl font-bold" colors={['#fff', '#d946ef', '#a855f7']}>
             Dashboard
           </GradientText>
-          <p className="text-dark-400 mt-1">Welcome back, {user?.username || 'admin'}</p>
+          <p className="text-dark-400 mt-1">Welcome back, {user?.username || 'operator'}</p>
         </div>
         <div className="flex items-center gap-3">
           <div className={cn(

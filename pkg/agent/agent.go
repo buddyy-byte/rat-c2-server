@@ -106,7 +106,7 @@ func (m *Manager) Register(reg *RegistrationData, wsConn *websocket.Conn, ip str
 		agent.Username = reg.Username
 		agent.Hostname = reg.Hostname
 		agent.Capabilities = reg.Capabilities
-		go m.persistAgent(agent)
+		m.persistAgent(agent)
 	} else {
 		// New agent
 		agent = &Agent{
@@ -128,8 +128,7 @@ func (m *Manager) Register(reg *RegistrationData, wsConn *websocket.Conn, ip str
 		}
 		m.agents[agent.ID] = agent
 
-		// Persist to DB
-		go m.persistAgent(agent)
+		m.persistAgent(agent)
 	}
 
 	// Setup WS connection

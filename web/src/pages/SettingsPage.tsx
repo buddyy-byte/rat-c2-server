@@ -26,24 +26,12 @@ import {
   Key,
   Terminal,
   Globe,
-  Database,
-  Server,
-  Cpu,
-  HardDrive,
-  Network,
-  Wifi,
-  Bluetooth,
-  Usb,
-  Camera,
-  Mic,
-  Speaker,
-  Volume2,
-  VolumeX,
-  MicOff,
-  CameraOff,
-  WifiOff,
-  BluetoothOff,
-  UsbOff,
+  Settings,
+  Mail,
+  Copy,
+  Trash2,
+  Plus,
+  Check,
 } from "lucide-react"
 import { cn } from '@/lib/utils'
 
@@ -173,7 +161,7 @@ export function SettingsPage() {
                           value={profileData.email}
                           onChange={(e) => setProfileData(prev => ({ ...prev, email: e.target.value }))}
                           className="pl-10"
-                          placeholder="admin@example.com"
+                          placeholder="you@domain.com"
                         />
                       </div>
                     </div>

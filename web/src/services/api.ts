@@ -79,8 +79,8 @@ class ApiClient {
   }
 
   // Auth
-  async login(username: string, password: string): Promise<{ token: string; user: { username: string } }> {
-    const result = await this.request<{ token: string; user: { username: string } }>('/api/auth/login', {
+  async login(username: string, password: string): Promise<{ token: string; user: { username: string; role?: 'owner' | 'operator' } }> {
+    const result = await this.request<{ token: string; user: { username: string; role?: 'owner' | 'operator' } }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     })
@@ -97,13 +97,21 @@ class ApiClient {
     this.setToken(null)
   }
 
-  async register(username: string, password: string, email?: string): Promise<{ token: string; user: { username: string } }> {
-    const result = await this.request<{ token: string; user: { username: string } }>('/api/auth/register', {
+  async register(username: string, password: string, email?: string): Promise<{ token: string; user: { username: string; role?: 'owner' | 'operator' } }> {
+    const result = await this.request<{ token: string; user: { username: string; role?: 'owner' | 'operator' } }>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({ username, password, email: email || '' }),
     })
     this.setToken(result.token)
     return result
+  }
+
+  async listOperators(): Promise<Array<{ id: string; username: string; email: string; role: string; created_at: string; last_login?: string; last_ip?: string }>> {
+    return this.request('/api/operators')
+  }
+
+  async getOperator(id: string): Promise<{ id: string; username: string; email: string; role: string; created_at: string; last_login?: string; last_ip?: string }> {
+    return this.request(`/api/operators/${id}`)
   }
 
   // Agents

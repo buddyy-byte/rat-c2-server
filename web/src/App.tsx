@@ -11,6 +11,7 @@ import { AgentDetailPage } from '@/pages/AgentDetailPage'
 import { PayloadBuilderPage } from '@/pages/PayloadBuilderPage'
 import { ShellPage } from '@/pages/ShellPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { RegisteredUsersPage } from '@/pages/RegisteredUsersPage'
 import { useAuthStore } from '@/stores/authStore'
 import { useAgentStore } from '@/stores/agentStore'
 
@@ -59,6 +60,8 @@ export function App() {
                   <Route path="/agents" element={<AgentsPage />} />
                   <Route path="/agents/:id" element={<AgentDetailPage />} />
                   <Route path="/payloads" element={<PayloadBuilderPage />} />
+                  <Route path="/users" element={<RegisteredUsersPage />} />
+                  <Route path="/users/:id" element={<RegisteredUsersPage />} />
                   <Route path="/shell/:agentId" element={<ShellPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>

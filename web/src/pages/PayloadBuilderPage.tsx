@@ -507,10 +507,10 @@ export function PayloadBuilderPage() {
                   {[
                     { key: 'AmsiBypass' as const, title: 'AMSI Bypass', desc: 'Patch AmsiScanBuffer in-process' },
                     { key: 'EtwPatch' as const, title: 'ETW Patching', desc: 'Patch EtwEventWrite' },
-                    { key: 'PpidSpoof' as const, title: 'PPID Spoofing', desc: 'Recorded; carrier spawn uses CREATE_NO_WINDOW' },
-                    { key: 'DllUnhook' as const, title: 'DLL Unhooking', desc: 'Recorded in trailer for later mapper' },
-                    { key: 'HeapEncrypt' as const, title: 'Heap Encryption', desc: 'Sleep obfuscation already XOR-scrubs a scratch buffer' },
-                    { key: 'StackSpoof' as const, title: 'Stack Spoofing', desc: 'Recorded in trailer' },
+                    { key: 'PpidSpoof' as const, title: 'PPID Spoofing', desc: 'Early-bird CreateProcess parent = explorer.exe' },
+                    { key: 'DllUnhook' as const, title: 'DLL Unhooking', desc: 'Restore ntdll .text from disk before beacon' },
+                    { key: 'HeapEncrypt' as const, title: 'Heap Encryption', desc: 'XOR-scrub scratch buffer across sleep' },
+                    { key: 'StackSpoof' as const, title: 'Stack Spoofing', desc: 'Recorded; injection trampoline is a register-only stub' },
                   ].map(item => (
                     <div key={item.key} className="flex items-center justify-between p-3 bg-dark-800/50 rounded-lg border border-dark-700">
                       <div>

