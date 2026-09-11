@@ -1,4 +1,4 @@
-module rat-c2-server
+module chemicalumbra.dev/server
 
 go 1.25.0
 

@@ -4,9 +4,9 @@ import { GradientText } from '@/components/ui/GradientText'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { Label } from '@/components/ui/Label'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
 import { useAuthStore } from '@/stores/authStore'
-import { api } from '@/services/api'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { Lock, User, Mail, Eye, EyeOff, Loader2, CheckCircle, AlertCircle, Key, Shield, Terminal } from "lucide-react"
@@ -14,25 +14,25 @@ import { cn } from '@/lib/utils'
 
 export function LoginPage() {
   const navigate = useNavigate()
-  const { login, register, loading } = useAuthStore()
+  const { login } = useAuthStore()
   const [isRegister, setIsRegister] = React.useState(false)
   const [showPassword, setShowPassword] = React.useState(false)
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [email, setEmail] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLoading(true)
     try {
-      if (isRegister) {
-        await register(username, password)
-      } else {
-        await login(username, password)
-      }
+      await login(username, password)
       toast.success(isRegister ? 'Account created!' : 'Welcome back!')
       navigate('/')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Authentication failed')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -62,9 +62,9 @@ export function LoginPage() {
               <Terminal className="w-8 h-8 text-white" />
             </div>
             <GradientText className="text-3xl font-bold" colors={['#fff', '#d946ef', '#a855f7']}>
-              RATC2
+              Chemical Umbra
             </GradientText>
-            <p className="text-dark-400 mt-1">Command & Control Framework</p>
+            <p className="text-dark-400 mt-1">dark-room operations console</p>
           </motion.div>
 
           {/* Form Card */}
@@ -179,14 +179,17 @@ export function LoginPage() {
               </Tabs>
 
               {/* Demo credentials */}
-              <div className="mt-6 p-4 bg-dark-800/50 rounded-lg border border-dark-700">
-                <p className="text-xs text-dark-500 text-center mb-2">Demo Credentials</p>
+              <button
+                type="button"
+                onClick={() => { setUsername('admin'); setPassword('admin') }}
+                className="mt-6 p-4 w-full bg-dark-800/50 rounded-lg border border-dark-700 hover:border-accent-500/40 text-left"
+              >
+                <p className="text-xs text-dark-500 text-center mb-2">Demo credentials — click to fill</p>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded">admin</div>
-                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded">admin123</div>
+                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded text-center">admin</div>
+                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded text-center">admin</div>
                 </div>
-                <p className="text-xs text-dark-500 text-center mt-2">Click to auto-fill</p>
-              </div>
+              </button>
             </CardContent>
           </Card>
 

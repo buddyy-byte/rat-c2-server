@@ -1,0 +1,4 @@
+{
+  "framework": "go",
+  "buildCommand": "go build -ldflags '-s -w' -o server ./cmd/server"
+}

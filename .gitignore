@@ -22,9 +22,10 @@ server.log
 
 # Frontend
 web/node_modules/
-web/dist/
 *.local
 
 # OS / editor
 .DS_Store
 Thumbs.db
+
+.vercel

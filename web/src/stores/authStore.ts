@@ -1,15 +1,23 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { api } from '@/services/api'
-import type { Agent } from '@/types'
+
+export type AuthUser = {
+  username: string
+  email?: string
+  bio?: string
+}
 
 interface AuthState {
   token: string | null
-  user: { username: string } | null
+  user: AuthUser | null
   isAuthenticated: boolean
+  loading: boolean
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   checkAuth: () => Promise<void>
+  updateProfile: (username: string, email: string) => Promise<void>
+  changePassword: (current: string, next: string) => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -18,11 +26,16 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       user: null,
       isAuthenticated: false,
+      loading: false,
 
       login: async (username: string, password: string) => {
         const data = await api.login(username, password)
         localStorage.setItem('auth_token', data.token)
-        set({ token: data.token, user: data.user, isAuthenticated: true })
+        set({
+          token: data.token,
+          user: { username: data.user?.username || username, email: '' },
+          isAuthenticated: true,
+        })
       },
 
       logout: async () => {
@@ -36,8 +49,22 @@ export const useAuthStore = create<AuthState>()(
       checkAuth: async () => {
         const token = localStorage.getItem('auth_token')
         if (token) {
-          set({ token, isAuthenticated: true, user: { username: 'admin' } })
+          const existing = get().user
+          set({
+            token,
+            isAuthenticated: true,
+            user: existing || { username: 'admin', email: '' },
+          })
         }
+      },
+
+      updateProfile: async (username: string, email: string) => {
+        const current = get().user
+        set({ user: { ...(current || { username }), username, email } })
+      },
+
+      changePassword: async (_current: string, _next: string) => {
+        return
       },
     }),
     {

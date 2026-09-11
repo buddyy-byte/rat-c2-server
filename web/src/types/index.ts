@@ -163,6 +163,10 @@ export interface PayloadConfig {
   InjectionMethod: string
   EncryptionKey: string
   CustomConfig: string
+  Persistence: boolean
+  HideConsole: boolean
+  SleepInterval: number
+  Jitter: number
 }
 
 export interface BuildResult {

