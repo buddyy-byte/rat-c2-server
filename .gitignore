@@ -5,6 +5,7 @@
 /dist/*.db
 /dist/*.db-*
 /payloads/
+chemical-login.txt
 *.exe~
 *.db
 *.db-*

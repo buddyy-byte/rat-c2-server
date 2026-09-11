@@ -60,6 +60,12 @@ const defaultConfig: PayloadConfig = {
   HideConsole: true,
   SleepInterval: 15,
   Jitter: 20,
+  AmsiBypass: true,
+  EtwPatch: true,
+  PpidSpoof: false,
+  DllUnhook: false,
+  HeapEncrypt: false,
+  StackSpoof: false,
 }
 
 export function PayloadBuilderPage() {
@@ -233,6 +239,26 @@ export function PayloadBuilderPage() {
                     />
                   </div>
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sleepInterval">Sleep interval (seconds)</Label>
+                    <Input
+                      id="sleepInterval"
+                      type="number"
+                      value={config.SleepInterval}
+                      onChange={(e) => setConfig(prev => ({ ...prev, SleepInterval: parseInt(e.target.value) || 15 }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jitter">Jitter</Label>
+                    <Input
+                      id="jitter"
+                      type="number"
+                      value={config.Jitter}
+                      onChange={(e) => setConfig(prev => ({ ...prev, Jitter: parseInt(e.target.value) || 0 }))}
+                    />
+                  </div>
+                </div>
                 <div className="flex items-center justify-between rounded-lg border border-dark-700 bg-dark-900 px-3 py-2">
                   <div>
                     <Label htmlFor="useTls">Use TLS</Label>
@@ -242,6 +268,17 @@ export function PayloadBuilderPage() {
                     id="useTls"
                     checked={config.UseTLS || config.ServerPort === 443}
                     onCheckedChange={(v) => setConfig(prev => ({ ...prev, UseTLS: v }))}
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-dark-700 bg-dark-900 px-3 py-2">
+                  <div>
+                    <Label htmlFor="hideConsole">Hide console</Label>
+                    <p className="text-xs text-dark-500">No cmd window. FreeConsole + SHOW_WINDOW hide.</p>
+                  </div>
+                  <Switch
+                    id="hideConsole"
+                    checked={config.HideConsole}
+                    onCheckedChange={(v) => setConfig(prev => ({ ...prev, HideConsole: v }))}
                   />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -467,30 +504,25 @@ export function PayloadBuilderPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
-                    <p className="font-medium text-dark-100">AMSI Bypass</p>
-                    <p className="text-sm text-dark-500">Bypass Antimalware Scan Interface</p>
-                  </div>
-                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
-                    <p className="font-medium text-dark-100">ETW Patching</p>
-                    <p className="text-sm text-dark-500">Disable Event Tracing for Windows</p>
-                  </div>
-                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
-                    <p className="font-medium text-dark-100">PPID Spoofing</p>
-                    <p className="text-sm text-dark-500">Spoof parent process ID</p>
-                  </div>
-                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
-                    <p className="font-medium text-dark-100">DLL Unhooking</p>
-                    <p className="text-sm text-dark-500">Restore original syscalls</p>
-                  </div>
-                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
-                    <p className="font-medium text-dark-100">Heap Encryption</p>
-                    <p className="text-sm text-dark-500">Encrypt heap allocations</p>
-                  </div>
-                  <div className="space-y-2 p-3 bg-dark-800/50 rounded-lg border border-dark-700">
-                    <p className="font-medium text-dark-100">Stack Spoofing</p>
-                    <p className="text-sm text-dark-500">Fake stack frames</p>
-                  </div>
+                  {[
+                    { key: 'AmsiBypass' as const, title: 'AMSI Bypass', desc: 'Patch AmsiScanBuffer in-process' },
+                    { key: 'EtwPatch' as const, title: 'ETW Patching', desc: 'Patch EtwEventWrite' },
+                    { key: 'PpidSpoof' as const, title: 'PPID Spoofing', desc: 'Recorded; carrier spawn uses CREATE_NO_WINDOW' },
+                    { key: 'DllUnhook' as const, title: 'DLL Unhooking', desc: 'Recorded in trailer for later mapper' },
+                    { key: 'HeapEncrypt' as const, title: 'Heap Encryption', desc: 'Sleep obfuscation already XOR-scrubs a scratch buffer' },
+                    { key: 'StackSpoof' as const, title: 'Stack Spoofing', desc: 'Recorded in trailer' },
+                  ].map(item => (
+                    <div key={item.key} className="flex items-center justify-between p-3 bg-dark-800/50 rounded-lg border border-dark-700">
+                      <div>
+                        <p className="font-medium text-dark-100">{item.title}</p>
+                        <p className="text-sm text-dark-500">{item.desc}</p>
+                      </div>
+                      <Switch
+                        checked={config[item.key]}
+                        onCheckedChange={(checked) => setConfig(prev => ({ ...prev, [item.key]: checked }))}
+                      />
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>

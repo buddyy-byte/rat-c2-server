@@ -97,10 +97,10 @@ class ApiClient {
     this.setToken(null)
   }
 
-  async register(username: string, password: string): Promise<{ token: string; user: { username: string } }> {
+  async register(username: string, password: string, email?: string): Promise<{ token: string; user: { username: string } }> {
     const result = await this.request<{ token: string; user: { username: string } }>('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, email: email || '' }),
     })
     this.setToken(result.token)
     return result

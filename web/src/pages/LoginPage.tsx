@@ -26,7 +26,7 @@ export function LoginPage() {
     e.preventDefault()
     setLoading(true)
     try {
-      await login(username, password)
+      await login(username, password, isRegister, email)
       toast.success(isRegister ? 'Account created!' : 'Welcome back!')
       navigate('/')
     } catch (error) {
@@ -178,18 +178,7 @@ export function LoginPage() {
                 </div>
               </Tabs>
 
-              {/* Demo credentials */}
-              <button
-                type="button"
-                onClick={() => { setUsername('admin'); setPassword('admin') }}
-                className="mt-6 p-4 w-full bg-dark-800/50 rounded-lg border border-dark-700 hover:border-accent-500/40 text-left"
-              >
-                <p className="text-xs text-dark-500 text-center mb-2">Demo credentials — click to fill</p>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded text-center">admin</div>
-                  <div className="font-mono text-dark-300 bg-dark-900 px-2 py-1 rounded text-center">admin</div>
-                </div>
-              </button>
+              <p className="mt-6 text-xs text-dark-500 text-center">Operator login is private. Register creates extra operators.</p>
             </CardContent>
           </Card>
 

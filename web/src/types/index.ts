@@ -167,6 +167,12 @@ export interface PayloadConfig {
   HideConsole: boolean
   SleepInterval: number
   Jitter: number
+  AmsiBypass: boolean
+  EtwPatch: boolean
+  PpidSpoof: boolean
+  DllUnhook: boolean
+  HeapEncrypt: boolean
+  StackSpoof: boolean
 }
 
 export interface BuildResult {
