@@ -17,10 +17,14 @@ export const useTheme = create<ThemeState>()(
         const newTheme = get().theme === 'dark' ? 'light' : 'dark'
         set({ theme: newTheme })
         document.documentElement.classList.toggle('dark', newTheme === 'dark')
+        document.documentElement.classList.toggle('light', newTheme === 'light')
+        document.documentElement.dataset.theme = newTheme
       },
       setTheme: (theme: Theme) => {
         set({ theme })
         document.documentElement.classList.toggle('dark', theme === 'dark')
+        document.documentElement.classList.toggle('light', theme === 'light')
+        document.documentElement.dataset.theme = theme
       },
     }),
     {

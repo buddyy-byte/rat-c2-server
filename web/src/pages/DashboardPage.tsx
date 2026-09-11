@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/Button'
 import { useAgentStore } from '@/stores/agentStore'
 import { useAuthStore } from '@/stores/authStore'
+import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import {
   Monitor,
@@ -45,10 +46,14 @@ export function DashboardPage() {
   const { agents, fetchAgents, loading, wsConnected } = useAgentStore()
   const { user } = useAuthStore()
 
+  const [stats, setStats] = React.useState({ pending: 0, completed: 0 })
   React.useEffect(() => {
     fetchAgents()
     const interval = setInterval(() => fetchAgents(), 10000)
-    return () => clearInterval(interval)
+    const pull = () => api.getStats().then(s => setStats({ pending: s.pending_tasks, completed: s.completed_today })).catch(() => {})
+    pull()
+    const st = setInterval(pull, 10000)
+    return () => { clearInterval(interval); clearInterval(st) }
   }, [fetchAgents])
 
   const activeAgents = agents.filter(a => a.Status === 'active').length
@@ -106,7 +111,7 @@ export function DashboardPage() {
                   <div>
                     <p className="text-sm text-dark-400 mb-1">{stat.name}</p>
                     <p className="text-3xl font-bold font-mono tabular-nums" id={`stat-${stat.name.toLowerCase().replace(' ', '-')}`}>
-                      {stat.name === 'Active Agents' ? activeAgents : stat.name === 'Total Agents' ? totalAgents : stat.value}
+                      {stat.name === 'Active Agents' ? activeAgents : stat.name === 'Total Agents' ? totalAgents : stat.name === 'Pending Tasks' ? stats.pending : stats.completed}
                     </p>
                   </div>
                   <div className={cn("p-3 rounded-xl", stat.bg)}>

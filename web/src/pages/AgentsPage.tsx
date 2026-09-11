@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils'
 
 export function AgentsPage() {
   const { agents, fetchAgents, loading, wsConnected, selectedAgent, setSelectedAgent } = useAgentStore()
-  const [searchTerm, setSearchTerm] = React.useState('')
+  const [searchTerm, setSearchTerm] = React.useState(() => new URLSearchParams(window.location.search).get('q') || '')
   const [statusFilter, setStatusFilter] = React.useState<'all' | 'active' | 'idle' | 'offline'>('all')
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid')
 

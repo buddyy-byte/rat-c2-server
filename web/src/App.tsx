@@ -12,8 +12,14 @@ import { PayloadBuilderPage } from '@/pages/PayloadBuilderPage'
 import { ShellPage } from '@/pages/ShellPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { RegisteredUsersPage } from '@/pages/RegisteredUsersPage'
+import { LateralPage } from '@/pages/LateralPage'
+import { EvasionPage } from '@/pages/EvasionPage'
+import { ModulesPage } from '@/pages/ModulesPage'
 import { useAuthStore } from '@/stores/authStore'
 import { useAgentStore } from '@/stores/agentStore'
+import { useTheme } from '@/hooks/useTheme'
+import { useUIStore } from '@/stores/uiStore'
+import { cn } from '@/lib/utils'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -22,13 +28,16 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AppLayout({ children }: { children: React.ReactNode }) {
+  const collapsed = useUIStore(s => s.sidebarCollapsed)
+  const density = useUIStore(s => s.density)
+  const pad = density === 'compact' ? 'p-3 md:p-4' : density === 'spacious' ? 'p-6 md:p-10' : 'p-4 md:p-6 lg:p-8'
   return (
     <GradientBackground>
-      <div className="min-h-screen flex">
+      <div className="min-h-screen">
         <Sidebar />
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className={cn('min-h-screen flex flex-col transition-[margin] duration-300', collapsed ? 'ml-20' : 'ml-64')}>
           <Header />
-          <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-auto">
+          <main className={cn('flex-1 overflow-auto', pad)}>
             {children}
           </main>
         </div>
@@ -37,9 +46,25 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   )
 }
 
+function ThemeBoot() {
+  const theme = useTheme(s => s.theme)
+  const density = useUIStore(s => s.density)
+  const mono = useUIStore(s => s.monoFont)
+  React.useEffect(() => {
+    const root = document.documentElement
+    root.classList.toggle('dark', theme === 'dark')
+    root.classList.toggle('light', theme === 'light')
+    root.dataset.theme = theme
+    root.dataset.density = density
+    root.dataset.mono = mono
+  }, [theme, density, mono])
+  return null
+}
+
 export function App() {
   const { token, checkAuth } = useAuthStore()
   const { connectWS } = useAgentStore()
+  const theme = useTheme(s => s.theme)
 
   React.useEffect(() => {
     checkAuth()
@@ -48,6 +73,7 @@ export function App() {
 
   return (
     <>
+      <ThemeBoot />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
@@ -62,6 +88,9 @@ export function App() {
                   <Route path="/payloads" element={<PayloadBuilderPage />} />
                   <Route path="/users" element={<RegisteredUsersPage />} />
                   <Route path="/users/:id" element={<RegisteredUsersPage />} />
+                  <Route path="/lateral" element={<LateralPage />} />
+                  <Route path="/evasion" element={<EvasionPage />} />
+                  <Route path="/modules" element={<ModulesPage />} />
                   <Route path="/shell/:agentId" element={<ShellPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
@@ -70,7 +99,7 @@ export function App() {
           }
         />
       </Routes>
-      <Toaster position="top-right" theme="dark" className="bg-dark-900 border-dark-700" />
+      <Toaster position="top-right" theme={theme === 'light' ? 'light' : 'dark'} className="bg-dark-900 border-dark-700" />
     </>
   )
 }

@@ -114,6 +114,10 @@ class ApiClient {
     return this.request(`/api/operators/${id}`)
   }
 
+  async getStats(): Promise<{ active_agents: number; total_agents: number; pending_tasks: number; completed_today: number; uptime_ms: number }> {
+    return this.request('/api/stats')
+  }
+
   // Agents
   async getAgents(): Promise<Agent[]> {
     const raw = await this.request<any>('/api/agents')
@@ -263,11 +267,22 @@ class ApiClient {
     })
   }
 
-  async pivotAgent(agentId: string, target: string, technique: string): Promise<Task> {
-    return this.request<Task>(`/api/agents/${agentId}/lateral/pivot`, {
+  async executeLateralMove(agentId: string, opts: { technique: string; target: string; credentials_id?: string }): Promise<any> {
+    return this.request(`/api/agents/${agentId}/lateral`, {
       method: 'POST',
-      body: JSON.stringify({ target, technique }),
+      body: JSON.stringify(opts),
     })
+  }
+
+  async executeEvasion(agentId: string, technique: string): Promise<any> {
+    return this.request(`/api/agents/${agentId}/evasion`, {
+      method: 'POST',
+      body: JSON.stringify({ technique }),
+    })
+  }
+
+  async listEvasionTechniques(): Promise<any[]> {
+    return this.request('/api/evasion/techniques')
   }
 
   // Evasion

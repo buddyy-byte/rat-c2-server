@@ -229,6 +229,19 @@ func registerHandler(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 	ip := c.ClientIP()
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		ip = strings.TrimSpace(strings.Split(xff, ",")[0])
+	} else if xri := c.GetHeader("X-Real-IP"); xri != "" {
+		ip = xri
+	}
+	if ip != "" && ip != "::1" && ip != "127.0.0.1" {
+		var n int
+		_ = db.Get(&n, `SELECT COUNT(*) FROM operators WHERE last_ip = ?`, ip)
+		if n > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "one account per IP"})
+			return
+		}
+	}
 	_, err := db.Exec(`INSERT INTO operators (id, username, password, email, created_at, last_login, last_ip) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		id, u, hashPass(req.Password), strings.TrimSpace(req.Email), now, now, ip)
 	if err != nil {
