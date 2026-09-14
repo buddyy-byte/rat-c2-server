@@ -98,6 +98,7 @@ export function AgentDetailPage() {
 
   const tabs = [
     { id: 'shell', label: 'Shell', icon: Terminal },
+    { id: 'desktop', label: 'Live Desktop', icon: Monitor },
     { id: 'screenshot', label: 'Screenshots', icon: Camera },
     { id: 'files', label: 'Files', icon: Download },
     { id: 'processes', label: 'Processes', icon: Network },
@@ -366,6 +367,9 @@ export function AgentDetailPage() {
 
           <TabsContent value="shell" className="h-[calc(100%-50px)]">
             <AgentDetailContent agentId={agent.ID} mode="shell" />
+          </TabsContent>
+          <TabsContent value="desktop" className="h-[calc(100%-50px)]">
+            <AgentDetailContent agentId={agent.ID} mode="desktop" />
           </TabsContent>
           <TabsContent value="screenshot" className="h-[calc(100%-50px)]">
             <AgentDetailContent agentId={agent.ID} mode="screenshot" />

@@ -100,7 +100,7 @@ export function PayloadBuilderPage() {
         throw new Error('trailer verify failed — stub wrap did not land')
       }
       const name = cfg.Platform === 'linux' ? 'umbra-linux' : (agentFile?.name ? `umbra-${agentFile.name}` : 'umbra-windows.exe')
-      const blob = new Blob([bytes], { type: 'application/octet-stream' })
+      const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -596,7 +596,7 @@ export function PayloadBuilderPage() {
                       use_tls: (prev.UseTLS || prev.ServerPort === 443) ? 'true' : 'false',
                       sleep_interval: '180',
                       jitter: '40',
-                      persistence: 'false',
+                      persistence: prev.Persistence ? 'true' : 'false',
                       hide_console: 'true',
                     }, null, 2) }))
                   }}>

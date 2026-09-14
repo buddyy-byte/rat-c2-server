@@ -5,7 +5,7 @@ import { GradientBackground } from '@/components/ui/GradientBackground'
 import { GradientText } from '@/components/ui/GradientText'
 import { DotGrid } from '@/components/ui/DotGrid'
 import { Button } from '@/components/ui/Button'
-import { Card, CardHeader, CardBody } from '@/components/ui/Card'
+import { Card, CardHeader, CardContent } from '@/components/ui/Card'
 import { Cookie, Search, RefreshCw, Copy, Trash2, Eye, Download } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import clsx from 'clsx'
@@ -25,7 +25,7 @@ export function CookiesPage() {
     if (!selectedAgent) return
     setLoading(true)
     try {
-      await fetchCookies(selectedAgent.id)
+      await fetchCookies(selectedAgent.ID)
     } catch (error) {
       addNotification({ type: 'error', message: `Failed to load cookies: ${error}` })
     } finally {
@@ -36,7 +36,7 @@ export function CookiesPage() {
   const filtered = cookies.filter((c) => {
     if (!searchQuery) return true
     const q = searchQuery.toLowerCase()
-    return c.domain.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.browser.toLowerCase().includes(q)
+    return c.Domain.toLowerCase().includes(q) || c.Name.toLowerCase().includes(q)
   })
 
   return (
@@ -63,7 +63,7 @@ export function CookiesPage() {
         </div>
 
         <Card className="bg-dark-800/50 border-dark-700 mb-4">
-          <CardBody className="p-4">
+          <CardContent className="p-4">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
               <input
@@ -74,11 +74,11 @@ export function CookiesPage() {
                 className="w-full pl-10 pr-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-dark-100 placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-accent-500"
               />
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         <Card>
-          <CardBody className="p-0">
+          <CardContent className="p-0">
             {loading ? (
               <div className="p-8 text-center">
                 <RefreshCw className="w-8 h-8 text-accent-400 animate-spin mx-auto mb-2" />
@@ -98,9 +98,8 @@ export function CookiesPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-dark-800 bg-dark-900/50">
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Browser</th>
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Domain</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Name</th>
+                      <th className="px-4 py-3 text-left font-medium text-dark-400">Domain</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Value</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Path</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Expires</th>
@@ -110,19 +109,18 @@ export function CookiesPage() {
                   </thead>
                   <tbody>
                     {filtered.map((cookie) => (
-                      <tr key={cookie.id} className="border-b border-dark-800/50 hover:bg-dark-800/50">
-                        <td className="px-4 py-3 text-dark-300 font-mono text-sm">{cookie.browser}</td>
-                        <td className="px-4 py-3 text-dark-100 font-mono text-sm">{cookie.domain}</td>
-                        <td className="px-4 py-3 text-dark-100 font-mono text-sm">{cookie.name}</td>
+                      <tr key={cookie.ID} className="border-b border-dark-800/50 hover:bg-dark-800/50">
+                        <td className="px-4 py-3 text-dark-100 font-mono text-sm">{cookie.Name}</td>
+                        <td className="px-4 py-3 text-dark-400 text-sm">{cookie.Domain}</td>
                         <td className="px-4 py-3">
-                          <span className="font-mono text-sm text-dark-300 bg-dark-900 px-2 py-1 rounded select-all" onClick={() => navigator.clipboard.writeText(cookie.value)}>
-                            {cookie.value.slice(0, 50)}{cookie.value.length > 50 ? '...' : ''}
+                          <span className="font-mono text-sm text-dark-300 bg-dark-900 px-2 py-1 rounded select-all" onClick={() => navigator.clipboard.writeText(cookie.Value)}>
+                            {cookie.Value.slice(0, 50)}{cookie.Value.length > 50 ? '...' : ''}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-dark-400 text-sm">{cookie.path}</td>
-                        <td className="px-4 py-3 text-dark-400 text-sm">{cookie.expires || 'Session'}</td>
+                        <td className="px-4 py-3 text-dark-400 text-sm">{cookie.Path}</td>
+                        <td className="px-4 py-3 text-dark-400 text-sm">{cookie.Expires || 'Session'}</td>
                         <td className="px-4 py-3 text-dark-400 text-sm">
-                          {cookie.extracted_at ? formatDistanceToNow(new Date(cookie.extracted_at), { addSuffix: true }) : '-'}
+                          {cookie.CreatedAt ? formatDistanceToNow(new Date(cookie.CreatedAt), { addSuffix: true }) : '-'}
                         </td>
                         <td className="px-4 py-3">
                           <button onClick={() => navigator.clipboard.writeText(JSON.stringify(cookie, null, 2))} className="p-1.5 rounded bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-accent-400 transition-colors" title="Copy All">
@@ -135,7 +133,7 @@ export function CookiesPage() {
                 </table>
               </div>
             )}
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     </GradientBackground>

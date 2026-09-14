@@ -6,13 +6,13 @@ import { GradientText } from '@/components/ui/GradientText'
 import { DotGrid } from '@/components/ui/DotGrid'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { Card, CardHeader, CardBody } from '@/components/ui/Card'
+import { Card, CardHeader, CardContent } from '@/components/ui/Card'
 import { Plus, RefreshCw, Download, Upload, File, Folder, Trash2, Copy, Eye, MoreVertical, Search, ChevronLeft, ChevronRight, Home, Zap } from 'lucide-react'
 import clsx from 'clsx'
 
 export function FileManagerPage() {
   const { agents, selectedAgent, addNotification, fileTransfers } = useStore()
-  const [currentPath, setCurrentPath] = useState<string>('C:\\')
+  const [currentPath, setCurrentPath] = useState<string>('C:\\\\')
   const [files, setFiles] = useState<Array<{ name: string; size: number; type: 'file' | 'dir'; modified: string }>>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -82,12 +82,12 @@ export function FileManagerPage() {
   }
 
   const navigateUp = () => {
-    const parts = currentPath.split('\\').filter(Boolean)
+    const parts = currentPath.split('\\\\').filter(Boolean)
     if (parts.length > 1) {
       parts.pop()
-      setCurrentPath(parts.join('\\') + '\\')
+      setCurrentPath(parts.join('\\\\') + '\\\\')
     } else if (parts.length === 1) {
-      setCurrentPath('C:\\')
+      setCurrentPath('C:\\\\')
     }
   }
 
@@ -117,13 +117,13 @@ export function FileManagerPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={navigateUp} disabled={currentPath === 'C:\\'}>
+            <Button variant="ghost" onClick={navigateUp} disabled={currentPath === 'C:\\\\'}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <Button variant="ghost" onClick={() => loadFiles(currentPath)} disabled={loading}>
               <RefreshCw className={clsx('w-4 h-4', loading && 'animate-spin')} />
             </Button>
-            <Button variant="primary" onClick={() => setShowUpload(true)}>
+            <Button variant="default" onClick={() => setShowUpload(true)}>
               <Upload className="w-4 h-4 mr-2" />
               Upload
             </Button>
@@ -132,15 +132,15 @@ export function FileManagerPage() {
 
         {/* Path Bar */}
         <Card className="mb-4">
-          <CardBody className="p-4">
+          <CardContent className="p-4">
             <div className="flex items-center gap-2 flex-wrap">
               <Home className="w-4 h-4 text-dark-400" />
-              <span className="font-mono text-sm text-dark-300">C:\\</span>
-              {currentPath !== 'C:\\' && currentPath.slice(3).split('\\').filter(Boolean).map((part, i, arr) => (
+              <span className="font-mono text-sm text-dark-300">C:\\\\</span>
+              {currentPath !== 'C:\\\\' && currentPath.slice(3).split('\\\\').filter(Boolean).map((part, i, arr) => (
                 <span key={i} className="flex items-center gap-2">
                   <ChevronRight className="w-4 h-4 text-dark-500" />
                   <button
-                    onClick={() => setCurrentPath(arr.slice(0, i + 1).join('\\') + '\\')}
+                    onClick={() => setCurrentPath(arr.slice(0, i + 1).join('\\\\') + '\\\\')}
                     className="font-mono text-sm text-dark-300 hover:text-accent-400 transition-colors"
                   >
                     {part}
@@ -148,7 +148,7 @@ export function FileManagerPage() {
                 </span>
               ))}
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         {/* File List */}
@@ -174,7 +174,7 @@ export function FileManagerPage() {
               </div>
             </div>
           </CardHeader>
-          <CardBody className="p-0">
+          <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -242,7 +242,7 @@ export function FileManagerPage() {
                 </tbody>
               </table>
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         {showUpload && (
@@ -251,7 +251,7 @@ export function FileManagerPage() {
               <CardHeader>
                 <h3 className="font-medium text-dark-100">Upload File</h3>
               </CardHeader>
-              <CardBody className="space-y-4">
+              <CardContent className="space-y-4">
                 <input
                   type="file"
                   id="upload-file"
@@ -269,7 +269,7 @@ export function FileManagerPage() {
                 <Button variant="ghost" onClick={() => setShowUpload(false)} className="w-full">
                   Cancel
                 </Button>
-              </CardBody>
+              </CardContent>
             </Card>
           </div>
         )}

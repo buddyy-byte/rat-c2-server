@@ -135,8 +135,8 @@ export const useStore = create<StoreState>()(
       tasks: [],
       setTasks: (tasks) => set({ tasks }),
       addTask: (task) => set((state) => ({ tasks: [task, ...state.tasks] })),
-      updateTask: (id, data) => set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...data } : t)) })),
-      removeTask: (id) => set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) })),
+      updateTask: (id, data) => set((state) => ({ tasks: state.tasks.map((t) => (t.ID === id ? { ...t, ...data } : t)) })),
+      removeTask: (id) => set((state) => ({ tasks: state.tasks.filter((t) => t.ID !== id) })),
       fetchTasks: async (agentId) => {
         const { api } = await import('@/services/api')
         const tasks = await api.getTasks(agentId)
@@ -147,8 +147,8 @@ export const useStore = create<StoreState>()(
       fileTransfers: [],
       setFileTransfers: (files) => set({ fileTransfers: files }),
       addFileTransfer: (file) => set((state) => ({ fileTransfers: [file, ...state.fileTransfers] })),
-      updateFileTransfer: (id, data) => set((state) => ({ fileTransfers: state.fileTransfers.map((f) => (f.id === id ? { ...f, ...data } : f)) })),
-      removeFileTransfer: (id) => set((state) => ({ fileTransfers: state.fileTransfers.filter((f) => f.id !== id) })),
+      updateFileTransfer: (id, data) => set((state) => ({ fileTransfers: state.fileTransfers.map((f) => (f.ID === id ? { ...f, ...data } : f)) })),
+      removeFileTransfer: (id) => set((state) => ({ fileTransfers: state.fileTransfers.filter((f) => f.ID !== id) })),
       fetchFileTransfers: async (agentId) => {
         const { api } = await import('@/services/api')
         const files = await api.getFileTransfers(agentId)
@@ -197,7 +197,7 @@ export const useStore = create<StoreState>()(
       screenshots: [],
       setScreenshots: (shots) => set({ screenshots: shots }),
       addScreenshot: (shot) => set((state) => ({ screenshots: [shot, ...state.screenshots] })),
-      removeScreenshot: (id) => set((state) => ({ screenshots: state.screenshots.filter((s) => s.id !== id) })),
+      removeScreenshot: (id) => set((state) => ({ screenshots: state.screenshots.filter((s) => s.ID !== id) })),
       fetchScreenshots: async (agentId) => {
         const { api } = await import('@/services/api')
         const shots = await api.getScreenshots(agentId)
@@ -217,7 +217,7 @@ export const useStore = create<StoreState>()(
       lateralMoves: [],
       setLateralMoves: (moves) => set({ lateralMoves: moves }),
       addLateralMove: (move) => set((state) => ({ lateralMoves: [move, ...state.lateralMoves] })),
-      updateLateralMove: (id, data) => set((state) => ({ lateralMoves: state.lateralMoves.map((m) => (m.id === id ? { ...m, ...data } : m)) })),
+      updateLateralMove: (id, data) => set((state) => ({ lateralMoves: state.lateralMoves.map((m) => (m.ID === id ? { ...m, ...data } : m)) })),
       fetchLateralMoves: async (agentId) => {
         const { api } = await import('@/services/api')
         const moves = await api.getLateralMoves(agentId)
@@ -228,7 +228,7 @@ export const useStore = create<StoreState>()(
       evasionResults: [],
       setEvasionResults: (results) => set({ evasionResults: results }),
       addEvasionResult: (result) => set((state) => ({ evasionResults: [result, ...state.evasionResults] })),
-      updateEvasionResult: (id, data) => set((state) => ({ evasionResults: state.evasionResults.map((r) => (r.id === id ? { ...r, ...data } : r)) })),
+      updateEvasionResult: (id, data) => set((state) => ({ evasionResults: state.evasionResults.map((r) => (r.ID === id ? { ...r, ...data } : r)) })),
       fetchEvasionResults: async (agentId) => {
         const { api } = await import('@/services/api')
         const results = await api.getEvasionResults(agentId)

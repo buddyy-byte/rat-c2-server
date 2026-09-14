@@ -7,7 +7,7 @@ import { DotGrid } from '@/components/ui/DotGrid'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Input } from '@/components/ui/Input'
-import { Card, CardHeader, CardBody } from '@/components/ui/Card'
+import { Card, CardHeader, CardContent } from '@/components/ui/Card'
 import { Monitor, Key, Shield, Globe, Search, Plus, RefreshCw, ChevronLeft, ChevronRight, Home, Wifi, WifiOff, AlertTriangle, XCircle, CheckCircle, Zap, Lock, Unlock, User, Terminal, Cpu, FileText, Keyboard, ArrowRightLeft, Settings, Download, Upload, Trash2, Copy, Eye, Play, Pause, Power } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import clsx from 'clsx'
@@ -27,7 +27,7 @@ export function CredentialsPage() {
     if (!selectedAgent) return
     setLoading(true)
     try {
-      await fetchCredentials(selectedAgent.id)
+          await fetchCredentials(selectedAgent.ID)
     } catch (error) {
       addNotification({ type: 'error', message: `Failed to load credentials: ${error}` })
     } finally {
@@ -38,7 +38,7 @@ export function CredentialsPage() {
   const filtered = credentials.filter((c) => {
     if (!searchQuery) return true
     const q = searchQuery.toLowerCase()
-    return c.username.toLowerCase().includes(q) || c.domain?.toLowerCase().includes(q) || c.source.toLowerCase().includes(q)
+    return c.Username.toLowerCase().includes(q) || c.URL?.toLowerCase().includes(q) || c.Source.toLowerCase().includes(q)
   })
 
   const typeColors: Record<string, string> = {
@@ -48,8 +48,6 @@ export function CredentialsPage() {
     rdp: 'bg-orange-600/20 text-orange-400 border-orange-600/30',
     ssh: 'bg-cyan-600/20 text-cyan-400 border-cyan-600/30',
     ftp: 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30',
-    database: 'bg-red-600/20 text-red-400 border-red-600/30',
-    custom: 'bg-pink-600/20 text-pink-400 border-pink-600/30',
   }
 
   return (
@@ -75,25 +73,23 @@ export function CredentialsPage() {
           </div>
         </div>
 
-        {/* Search */}
         <Card className="bg-dark-800/50 border-dark-700 mb-4">
-          <CardBody className="p-4">
+          <CardContent className="p-4">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
-              <input
+              <Input
                 type="text"
                 placeholder="Search credentials..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-dark-100 placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                className="pl-10 bg-dark-900 border-dark-700"
               />
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
-        {/* Table */}
         <Card>
-          <CardBody className="p-0">
+          <CardContent className="p-0">
             {loading ? (
               <div className="p-8 text-center">
                 <RefreshCw className="w-8 h-8 text-accent-400 animate-spin mx-auto mb-2" />
@@ -113,33 +109,33 @@ export function CredentialsPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-dark-800 bg-dark-900/50">
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Type</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Source</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Username</th>
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Domain</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400">Password</th>
+                      <th className="px-4 py-3 text-left font-medium text-dark-400">URL</th>
+                      <th className="px-4 py-3 text-left font-medium text-dark-400">Browser</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400 w-40">Extracted</th>
                       <th className="px-4 py-3 text-left font-medium text-dark-400 w-12"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.map((cred) => (
-                      <tr key={cred.id} className="border-b border-dark-800/50 hover:bg-dark-800/50">
+                      <tr key={cred.ID} className="border-b border-dark-800/50 hover:bg-dark-800/50">
                         <td className="px-4 py-3">
-                          <Badge variant="outline" className={typeColors[cred.type] || 'bg-dark-800 text-dark-400'}>
-                            {cred.type}
+                          <Badge variant="outline" className={typeColors[cred.Source] || 'bg-dark-700 text-dark-300 border-dark-600'}>
+                            {cred.Source}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3 text-dark-300 font-mono text-sm">{cred.source}</td>
-                        <td className="px-4 py-3 text-dark-100 font-mono text-sm">{cred.username}</td>
-                        <td className="px-4 py-3 text-dark-400 font-mono text-sm">{cred.domain || '-'}</td>
+                        <td className="px-4 py-3 text-dark-100 font-mono text-sm">{cred.Username}</td>
                         <td className="px-4 py-3">
-                          <span className="font-mono text-sm text-dark-300 bg-dark-900 px-2 py-1 rounded select-all" title="Click to copy" onClick={() => navigator.clipboard.writeText(cred.password)}>
-                            {cred.password}
+                          <span className="font-mono text-sm text-dark-300 bg-dark-900 px-2 py-1 rounded select-all" onClick={() => navigator.clipboard.writeText(cred.Password)}>
+                            {cred.Password.slice(0, 30)}{cred.Password.length > 30 ? '...' : ''}
                           </span>
                         </td>
+                        <td className="px-4 py-3 text-dark-400 text-sm">{cred.URL || '-'}</td>
+                        <td className="px-4 py-3 text-dark-400 text-sm">{cred.Browser}</td>
                         <td className="px-4 py-3 text-dark-400 text-sm">
-                          {cred.extracted_at ? formatDistanceToNow(new Date(cred.extracted_at), { addSuffix: true }) : '-'}
+                          {cred.CreatedAt ? formatDistanceToNow(new Date(cred.CreatedAt), { addSuffix: true }) : '-'}
                         </td>
                         <td className="px-4 py-3">
                           <button onClick={() => navigator.clipboard.writeText(JSON.stringify(cred, null, 2))} className="p-1.5 rounded bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-accent-400 transition-colors" title="Copy All">
@@ -152,7 +148,7 @@ export function CredentialsPage() {
                 </table>
               </div>
             )}
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     </GradientBackground>

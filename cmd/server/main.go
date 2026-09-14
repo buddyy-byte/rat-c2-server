@@ -192,9 +192,7 @@ func (s *Server) setupAPIServer() {
 	// Wildcard "*" + AllowCredentials is rejected by browsers, so we mirror
 	// the incoming Origin instead.
 	r.Use(cors.New(cors.Config{
-		AllowOriginFunc: func(origin string) bool {
-			return true // reflect any origin; credentials still permitted
-		},
+		AllowOriginFunc: api.AllowedOrigin,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Requested-With"},
 		ExposeHeaders:    []string{"Content-Length"},

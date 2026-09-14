@@ -5,7 +5,7 @@ import { GradientBackground } from '@/components/ui/GradientBackground'
 import { GradientText } from '@/components/ui/GradientText'
 import { DotGrid } from '@/components/ui/DotGrid'
 import { Button } from '@/components/ui/Button'
-import { Card, CardHeader, CardBody } from '@/components/ui/Card'
+import { Card, CardHeader, CardContent } from '@/components/ui/Card'
 import { Keyboard, Search, RefreshCw, Copy, Trash2, Monitor, Cpu } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import clsx from 'clsx'
@@ -25,7 +25,7 @@ export function KeystrokesPage() {
     if (!selectedAgent) return
     setLoading(true)
     try {
-      await fetchKeystrokes(selectedAgent.id)
+      await fetchKeystrokes(selectedAgent.ID)
     } catch (error) {
       addNotification({ type: 'error', message: `Failed to load keystrokes: ${error}` })
     } finally {
@@ -34,10 +34,10 @@ export function KeystrokesPage() {
   }
 
   const filtered = keystrokes.filter((k) => {
-    if (!searchQuery) return true
-    const q = searchQuery.toLowerCase()
-    return k.window_title.toLowerCase().includes(q) || k.process_name.toLowerCase().includes(q) || k.keys.toLowerCase().includes(q)
-  })
+      if (!searchQuery) return true
+      const q = searchQuery.toLowerCase()
+      return k.Window.toLowerCase().includes(q) || k.Keys.toLowerCase().includes(q)
+    })
 
   return (
     <GradientBackground>
@@ -63,7 +63,7 @@ export function KeystrokesPage() {
         </div>
 
         <Card className="bg-dark-800/50 border-dark-700 mb-4">
-          <CardBody className="p-4">
+          <CardContent className="p-4">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
               <input
@@ -74,11 +74,11 @@ export function KeystrokesPage() {
                 className="w-full pl-10 pr-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-dark-100 placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-accent-500"
               />
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         <Card>
-          <CardBody className="p-0">
+          <CardContent className="p-0">
             {loading ? (
               <div className="p-8 text-center">
                 <RefreshCw className="w-8 h-8 text-accent-400 animate-spin mx-auto mb-2" />
@@ -91,37 +91,29 @@ export function KeystrokesPage() {
                   <Keyboard className="w-8 h-8 text-dark-600 relative mx-auto" />
                 </div>
                 <h3 className="text-lg font-medium text-dark-300 mb-1">No keystrokes found</h3>
-                <p className="text-dark-500">Start keylogging on the agent first</p>
+                <p className="text-dark-500">Keylogger data will appear here once the agent captures input</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-dark-800 bg-dark-900/50">
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Window</th>
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Process</th>
-                      <th className="px-4 py-3 text-left font-medium text-dark-400">Keys</th>
-                      <th className="px-4 py-3 text-left font-medium text-dark-400 w-40">Time</th>
-                      <th className="px-4 py-3 text-left font-medium text-dark-400 w-12"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((key) => (
-                      <tr key={key.id} className="border-b border-dark-800/50 hover:bg-dark-800/50">
-                        <td className="px-4 py-3 text-dark-300 text-sm max-w-xs truncate">{key.window_title}</td>
-                        <td className="px-4 py-3 text-dark-400 font-mono text-sm">{key.process_name}</td>
-                        <td className="px-4 py-3">
-                          <span className="font-mono text-sm text-dark-100 bg-dark-900 px-2 py-1 rounded select-all" onClick={() => navigator.clipboard.writeText(key.keys)}>
-                            {key.keys}
+                                      <tr className="border-b border-dark-800 bg-dark-900/50">
+                                        <th className="px-4 py-3 text-left font-medium text-dark-400">Window</th>
+                                        <th className="px-4 py-3 text-left font-medium text-dark-400">Keys</th>
+                                        <th className="px-4 py-3 text-left font-medium text-dark-400 w-40">Timestamp</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {filtered.map((k) => (
+                                        <tr key={k.ID} className="border-b border-dark-800/50 hover:bg-dark-800/50">
+                                          <td className="px-4 py-3 text-dark-100 font-mono text-sm">{k.Window}</td>
+                                          <td className="px-4 py-3">
+                          <span className="font-mono text-sm text-dark-300 bg-dark-900 px-2 py-1 rounded select-all" onClick={() => navigator.clipboard.writeText(k.Keys)}>
+                            {k.Keys.slice(0, 80)}{k.Keys.length > 80 ? '...' : ''}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-dark-400 text-sm">
-                          {key.timestamp ? formatDistanceToNow(new Date(key.timestamp), { addSuffix: true }) : '-'}
-                        </td>
-                        <td className="px-4 py-3">
-                          <button onClick={() => navigator.clipboard.writeText(JSON.stringify(key, null, 2))} className="p-1.5 rounded bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-accent-400 transition-colors" title="Copy All">
-                            <Copy className="w-4 h-4" />
-                          </button>
+                          {k.Timestamp ? formatDistanceToNow(new Date(k.Timestamp), { addSuffix: true }) : '-'}
                         </td>
                       </tr>
                     ))}
@@ -129,7 +121,7 @@ export function KeystrokesPage() {
                 </table>
               </div>
             )}
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     </GradientBackground>

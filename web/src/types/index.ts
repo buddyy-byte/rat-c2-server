@@ -184,3 +184,19 @@ export interface BuildResult {
   Error: string
   DownloadB64?: string
 }
+export interface Notification {
+  id: string
+  type: 'info' | 'success' | 'warning' | 'error'
+  title?: string
+  message: string
+  read: boolean
+  timestamp: string
+}
+
+export interface ShellSession {
+  id: string
+  agentId: string
+  command?: string
+  status?: 'active' | 'closed'
+  createdAt?: string
+}
