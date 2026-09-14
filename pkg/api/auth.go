@@ -1,23 +1,17 @@
 package api
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-const (
-	operatorUser = "chemical"
-	operatorPass = "K7mP9xQ2wL4nR8vT3yB6cF1hJ5sD0gA9uE2iO4zX"
-)
+const operatorUser = "chemical"
 
 type operatorRow struct {
 	ID        string  `db:"id" json:"id"`
@@ -39,16 +33,6 @@ type operatorPublic struct {
 	LastIP    string  `json:"last_ip,omitempty"`
 }
 
-var (
-	tokenMu sync.Mutex
-	tokens  = map[string]string{} // token -> username
-)
-
-func hashPass(p string) string {
-	s := sha256.Sum256([]byte(p))
-	return hex.EncodeToString(s[:])
-}
-
 func ownerUser() string {
 	if v := strings.TrimSpace(os.Getenv("RATC2_OPERATOR_USER")); v != "" {
 		return v
@@ -57,10 +41,7 @@ func ownerUser() string {
 }
 
 func ownerPass() string {
-	if v := strings.TrimSpace(os.Getenv("RATC2_OPERATOR_PASS")); v != "" {
-		return v
-	}
-	return operatorPass
+	return strings.TrimSpace(os.Getenv("RATC2_OPERATOR_PASS"))
 }
 
 func ensureAuthTables() {
@@ -84,43 +65,7 @@ func ensureAuthTables() {
 			token TEXT PRIMARY KEY,
 			username TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`)
-}
-
-func issueToken(username string) string {
-	t := uuid.New().String()
-	tokenMu.Lock()
-	tokens[t] = username
-	tokenMu.Unlock()
-	if db != nil {
-		ensureAuthTables()
-		_, _ = db.Exec(`INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)`, t, username, time.Now())
-	}
-	return t
-}
-
-func lookupToken(tok string) (string, bool) {
-	if tok == "" {
-		return "", false
-	}
-	tokenMu.Lock()
-	u, ok := tokens[tok]
-	tokenMu.Unlock()
-	if ok {
-		return u, true
-	}
-	if db == nil {
-		return "", false
-	}
-	ensureAuthTables()
-	var username string
-	if err := db.Get(&username, `SELECT username FROM sessions WHERE token = ?`, tok); err != nil {
-		return "", false
-	}
-	tokenMu.Lock()
-	tokens[tok] = username
-	tokenMu.Unlock()
-	return username, true
+		)` )
 }
 
 func bearerUser(c *gin.Context) string {
@@ -155,12 +100,58 @@ func lookupOperator(username string) (operatorRow, bool) {
 	return row, err == nil
 }
 
+func ownerEmail() string {
+	if v := strings.TrimSpace(os.Getenv("RATC2_OPERATOR_EMAIL")); v != "" {
+		return v
+	}
+	return "owner@chemical-umbra.local"
+}
+
+func ownerPublicRow() operatorPublic {
+	ensureAuthTables()
+	if db != nil {
+		if row, ok := lookupOperator(ownerUser()); ok {
+			return operatorPublic{
+				ID:        row.ID,
+				Username:  row.Username,
+				Email:     row.Email,
+				Role:      "owner",
+				CreatedAt: row.CreatedAt,
+				LastLogin: row.LastLogin,
+				LastIP:    row.LastIP,
+			}
+		}
+	}
+	return operatorPublic{ID: "owner", Username: ownerUser(), Email: ownerEmail(), Role: "owner"}
+}
+
+func ensureOwnerRow(ip string) {
+	if db == nil {
+		return
+	}
+	ensureAuthTables()
+	now := time.Now()
+	u := ownerUser()
+	if row, ok := lookupOperator(u); ok {
+		_, _ = db.Exec(`UPDATE operators SET last_login = ?, last_ip = ?, email = COALESCE(NULLIF(email,''), ?) WHERE username = ?`,
+			now, ip, ownerEmail(), u)
+		_ = row
+		return
+	}
+	_, _ = db.Exec(`INSERT INTO operators (id, username, password, email, created_at, last_login, last_ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"owner", u, "owner-env", ownerEmail(), now, now, ip)
+}
+
 func touchLogin(username, ip string) {
 	if db == nil {
 		return
 	}
 	now := time.Now()
 	_, _ = db.Exec(`UPDATE operators SET last_login = ?, last_ip = ? WHERE username = ?`, now, ip, username)
+	if isOwnerName(username) {
+		go persistSeats()
+	}
 }
 
 func loginHandler(c *gin.Context) {
@@ -180,17 +171,25 @@ func loginHandler(c *gin.Context) {
 	if isOwnerName(u) {
 		want := []byte(ownerPass())
 		got := []byte(p)
-		if len(got) == len(want) && subtle.ConstantTimeCompare(got, want) == 1 {
+		if len(want) >= 8 && len(got) == len(want) && subtle.ConstantTimeCompare(got, want) == 1 {
 			ok = true
 			role = "owner"
 			u = ownerUser()
+			ensureOwnerRow(ip)
+			touchLogin(u, ip)
 		}
 	}
 	if !ok {
-		if row, found := lookupOperator(u); found && row.Password == hashPass(p) {
+		if row, found := lookupOperator(u); found && checkPassword(row.Password, p) {
 			ok = true
 			u = row.Username
 			touchLogin(u, ip)
+			if needsRehash(row.Password) {
+				if h, err := hashPassword(p); err == nil {
+					_, _ = db.Exec(`UPDATE operators SET password = ? WHERE username = ?`, h, u)
+					go persistSeats()
+				}
+			}
 		}
 	}
 	if !ok {
@@ -210,42 +209,68 @@ func registerHandler(c *gin.Context) {
 		Username string `json:"username" binding:"required"`
 		Password string `json:"password" binding:"required"`
 		Email    string `json:"email"`
+		License  string `json:"license"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	u := strings.TrimSpace(req.Username)
-	if len(u) < 3 || len(req.Password) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username >= 3 chars, password >= 8"})
+	if len(u) < 3 || len(u) > 32 || len(req.Password) < 8 || len(req.Password) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "username 3-32, password 8-128"})
 		return
+	}
+	for _, r := range u {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '-'
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "username alphanumeric"})
+			return
+		}
 	}
 	if strings.EqualFold(u, "admin") || isOwnerName(u) {
 		c.JSON(http.StatusConflict, gin.H{"error": "username taken"})
 		return
 	}
 	ensureAuthTables()
+	ensureLicenseTable()
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no database"})
+		return
+	}
+	if strings.TrimSpace(req.License) == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "license key required"})
+		return
+	}
+	k := normalizeLicense(req.License)
+	var lic licenseRow
+	if err := db.Get(&lic, `SELECT id, key_hash, key_plain, invoice_id, username, created_at, bound_at FROM licenses WHERE key_hash = ?`, hashPass(k)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid license key"})
+		return
+	}
+	if lic.Username != nil && *lic.Username != "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "license already used"})
+		return
+	}
+	pw, err := hashPassword(req.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash failed"})
 		return
 	}
 	id := uuid.New().String()
 	now := time.Now()
 	ip := clientIP(c)
-	if ip != "" && ip != "::1" && ip != "127.0.0.1" {
-		var n int
-		_ = db.Get(&n, `SELECT COUNT(*) FROM operators WHERE last_ip = ?`, ip)
-		if n > 0 {
-			c.JSON(http.StatusConflict, gin.H{"error": "one account per IP"})
-			return
-		}
-	}
-	_, err := db.Exec(`INSERT INTO operators (id, username, password, email, created_at, last_login, last_ip) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, u, hashPass(req.Password), strings.TrimSpace(req.Email), now, now, ip)
+	_, err = db.Exec(`INSERT INTO operators (id, username, password, email, created_at, last_login, last_ip) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, u, pw, strings.TrimSpace(req.Email), now, now, ip)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "username taken"})
 		return
 	}
+	if err := consumeLicense(req.License, u); err != nil {
+		_, _ = db.Exec(`DELETE FROM operators WHERE id = ?`, id)
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	go persistSeats()
 	c.JSON(http.StatusOK, gin.H{
 		"token": issueToken(u),
 		"user":  gin.H{"username": u, "email": req.Email, "role": "operator"},
@@ -270,25 +295,32 @@ func listOperatorsHandler(c *gin.Context) {
 		return
 	}
 	ensureAuthTables()
-	out := []operatorPublic{{
-		ID:       "owner",
-		Username: ownerUser(),
-		Email:    "",
-		Role:     "owner",
-	}}
+	seen := map[string]bool{}
+	out := []operatorPublic{}
+	own := ownerPublicRow()
+	out = append(out, own)
+	seen[strings.ToLower(own.Username)] = true
 	if db != nil {
 		var rows []operatorRow
 		if err := db.Select(&rows, `SELECT id, username, COALESCE(email,'') as email, created_at, last_login, COALESCE(last_ip,'') as last_ip FROM operators ORDER BY created_at DESC`); err == nil {
 			for _, r := range rows {
+				if seen[strings.ToLower(r.Username)] {
+					continue
+				}
+				role := "operator"
+				if isOwnerName(r.Username) {
+					role = "owner"
+				}
 				out = append(out, operatorPublic{
 					ID:        r.ID,
 					Username:  r.Username,
 					Email:     r.Email,
-					Role:      "operator",
+					Role:      role,
 					CreatedAt: r.CreatedAt,
 					LastLogin: r.LastLogin,
 					LastIP:    r.LastIP,
 				})
+				seen[strings.ToLower(r.Username)] = true
 			}
 		}
 	}
@@ -301,11 +333,7 @@ func getOperatorHandler(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if id == "owner" || isOwnerName(id) {
-		c.JSON(http.StatusOK, operatorPublic{
-			ID:       "owner",
-			Username: ownerUser(),
-			Role:     "owner",
-		})
+		c.JSON(http.StatusOK, ownerPublicRow())
 		return
 	}
 	ensureAuthTables()
