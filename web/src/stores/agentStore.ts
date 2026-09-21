@@ -1,6 +1,31 @@
 import { create } from 'zustand'
 import { api } from '@/services/api'
+import { normalizeAgent } from '@/lib/utils'
 import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module } from '@/types'
+
+// per-connection cache so WS status flips fire notifications exactly once
+let statusCache = new Map<string, string>()
+let statusCacheWs: string | null = null
+function useAgentStatuses(): Map<string, string> {
+  if (statusCacheWs !== 'live') { statusCache = new Map(); statusCacheWs = 'live' }
+  return statusCache
+}
+const seenTasks = new Set<string>()
+
+// hub task frames are snake_case wire data; store Task is PascalCase
+function normalizeTask(raw: any): Task {
+  if (!raw || typeof raw !== 'object') return {} as Task
+  return {
+    ID: String(raw.ID ?? raw.id ?? ''),
+    AgentID: String(raw.AgentID ?? raw.agent_id ?? ''),
+    Type: String(raw.Type ?? raw.type ?? ''),
+    Command: String(raw.Command ?? raw.command ?? ''),
+    Status: (raw.Status ?? raw.status ?? 'pending') as Task['Status'],
+    Output: String(raw.Output ?? raw.result ?? raw.Output ?? ''),
+    CreatedAt: String(raw.CreatedAt ?? raw.created_at ?? ''),
+    CompletedAt: raw.CompletedAt ?? raw.completed_at ?? null,
+  }
+}
 
 interface AgentState {
   agents: Agent[]
@@ -231,21 +256,53 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     try {
       await api.connectWS(agentId)
       set({ wsConnected: true })
-      
-      api.onMessage('agent_update', (agent: Agent) => {
+      const statuses = useAgentStatuses()
+
+      api.onMessage('agent_update', (raw: Agent) => {
+        const agent = normalizeAgent(raw)
+        if (!agent.ID) return
+        const prev = statuses.get(agent.ID)
+        if (prev && prev !== agent.Status) {
+          import('@/stores/uiStore').then(({ useUIStore }) => {
+            const { pushNotice, notifyPrefs } = useUIStore.getState()
+            if (agent.Status === 'active' && notifyPrefs.agent_online) {
+              pushNotice({ kind: 'success', title: 'Agent online', body: agent.Hostname || agent.ID })
+            } else if (agent.Status === 'offline' && notifyPrefs.agent_offline) {
+              pushNotice({ kind: 'error', title: 'Agent offline', body: agent.Hostname || agent.ID })
+            }
+          })
+        }
+        statuses.set(agent.ID, agent.Status)
         set((state) => ({
           agents: state.agents.map((a) => (a.ID === agent.ID ? agent : a)),
           selectedAgent: state.selectedAgent?.ID === agent.ID ? agent : state.selectedAgent,
         }))
       })
-      
-      api.onMessage('task_update', (task: Task) => {
+
+      api.onMessage('task_update', (raw: Task) => {
+        const task = normalizeTask(raw)
+        if (!task.ID) return
         set((state) => ({
           tasks: state.tasks.map((t) => (t.ID === task.ID ? task : t)),
         }))
+        if ((task.Status === 'completed' || task.Status === 'failed')) {
+          import('@/stores/uiStore').then(({ useUIStore }) => {
+            const { pushNotice, notifyPrefs } = useUIStore.getState()
+            if (!notifyPrefs.command_complete) return
+            if (seenTasks.has(task.ID)) return
+            seenTasks.add(task.ID)
+            pushNotice({
+              kind: task.Status === 'completed' ? 'success' : 'error',
+              title: task.Status === 'completed' ? 'Command complete' : 'Command failed',
+              body: (task.Command || task.ID).slice(0, 60),
+            })
+          })
+        }
       })
-      
-      api.onMessage('new_task', (task: Task) => {
+
+      api.onMessage('new_task', (raw: Task) => {
+        const task = normalizeTask(raw)
+        if (!task.ID) return
         set((state) => ({ tasks: [task, ...state.tasks] }))
       })
     } catch (error) {

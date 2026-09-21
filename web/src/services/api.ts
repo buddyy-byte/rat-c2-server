@@ -110,6 +110,39 @@ class ApiClient {
     return this.request('/api/operators')
   }
 
+  async me(): Promise<{ username: string; role: string; email?: string; created_at?: string }> {
+    return this.request('/api/auth/me')
+  }
+
+  async updateSettings(body: { email?: string; current_password?: string; new_password?: string }): Promise<{ ok: boolean }> {
+    return this.request('/api/auth/settings', { method: 'POST', body: JSON.stringify(body) })
+  }
+
+  async recover(license: string, password: string, username?: string): Promise<{ token: string; user: { username: string; role?: string } }> {
+    const result = await this.request<{ token: string; user: { username: string; role?: string } }>('/api/auth/recover', {
+      method: 'POST',
+      body: JSON.stringify({ license, password, username: username || '' }),
+    })
+    this.setToken(result.token)
+    return result
+  }
+
+  async getPayloadHistory(): Promise<Array<{ id: string; filename: string; size: number; status: string; created_at: string }>> {
+    const raw = await this.request<any>('/api/payloads/history')
+    const rows = Array.isArray(raw) ? raw : (raw?.payloads || raw?.data || [])
+    return rows.map((r: any) => ({
+      id: String(r.id ?? r.ID ?? ''),
+      filename: String(r.filename ?? r.Filename ?? 'payload'),
+      size: Number(r.size ?? r.Size ?? 0),
+      status: String(r.status ?? r.Status ?? ''),
+      created_at: String(r.created_at ?? r.CreatedAt ?? ''),
+    }))
+  }
+
+  payloadDownloadUrl(id: string): string {
+    return `${API_BASE}/api/payloads/${encodeURIComponent(id)}/download`
+  }
+
   async getOperator(id: string): Promise<{ id: string; username: string; email: string; role: string; created_at: string; last_login?: string; last_ip?: string }> {
     return this.request(`/api/operators/${id}`)
   }
@@ -443,10 +476,13 @@ class ApiClient {
     }, delay)
   }
 
-  private handleMessage(message: { type: string; data: any }) {
+  private handleMessage(message: { type: string; data?: any; task?: any; agent?: any; file?: any }) {
+    // hub frames payloads as {type, task|agent|file} — unwrap them so handlers
+    // get the entity directly instead of undefined
+    const payload = message.data ?? message.task ?? message.agent ?? message.file ?? message
     const handlers = this.messageHandlers.get(message.type)
     if (handlers) {
-      handlers.forEach((handler) => handler(message.data))
+      handlers.forEach((handler) => handler(payload))
     }
   }
 

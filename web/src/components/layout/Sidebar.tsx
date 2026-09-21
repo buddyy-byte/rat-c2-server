@@ -45,6 +45,9 @@ export function Sidebar() {
   const { agents, fetchAgents } = useAgentStore()
   const collapsed = useUIStore(s => s.sidebarCollapsed)
   const toggle = useUIStore(s => s.toggleSidebar)
+  const mobileOpen = useUIStore(s => s.mobileOpen)
+  const setMobileOpen = useUIStore(s => s.setMobileOpen)
+  React.useEffect(() => { setMobileOpen(false) }, [location.pathname, setMobileOpen])
   const startedAt = useUIStore(s => s.startedAt)
   const isOwner = (user?.role === 'owner') || (user?.username || '').toLowerCase() === 'chemical'
   const items = navigation.filter(item => !('ownerOnly' in item && item.ownerOnly) || isOwner)
@@ -83,13 +86,24 @@ export function Sidebar() {
     )
 
   return (
-    <aside
-      className={cn(
-        'fixed inset-y-0 left-0 z-40 flex flex-col bg-dark-900/95 backdrop-blur-xl border-r border-dark-700 transition-[width] duration-300 overflow-hidden',
-        collapsed ? 'w-20' : 'w-64'
+    <>
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden
+        />
       )}
-      style={{ width: 'var(--sidebar-w, 16rem)' }}
-    >
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 flex flex-col bg-dark-900/95 backdrop-blur-xl border-r border-dark-700 transition-[transform,width] duration-300 overflow-hidden',
+          collapsed ? 'w-20' : 'w-64',
+          // mobile: full-width drawer that slides; desktop: always visible
+          'max-md:w-64',
+          mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'
+        )}
+        style={{ width: mobileOpen ? '16rem' : 'var(--sidebar-w, 16rem)' }}
+      >
       <div className="flex items-center justify-between h-16 px-4 border-b border-dark-700 shrink-0">
         <Link to="/" className="flex items-center gap-2 min-w-0">
           <div className="relative flex items-center justify-center w-8 h-8 rounded-xl bg-dark-900 border border-dark-700 shrink-0">
@@ -179,5 +193,6 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+    </>
   )
 }

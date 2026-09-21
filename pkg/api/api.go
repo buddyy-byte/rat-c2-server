@@ -50,6 +50,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 		api.POST("/auth/recover", authGuard(), recoverHandler)
 		api.POST("/auth/logout", logoutHandler)
 		api.GET("/auth/me", meHandler)
+		api.POST("/auth/settings", requireSession(), settingsHandler)
 		api.POST("/licenses/issue", issueLicenseHandler)
 		api.POST("/licenses/paid", paidLicenseHandler)
 

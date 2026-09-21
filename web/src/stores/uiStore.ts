@@ -26,6 +26,8 @@ type UIState = {
   sidebarCollapsed: boolean
   setSidebarCollapsed: (v: boolean) => void
   toggleSidebar: () => void
+  mobileOpen: boolean
+  setMobileOpen: (v: boolean) => void
   density: Density
   setDensity: (d: Density) => void
   monoFont: MonoFont
@@ -54,6 +56,8 @@ export const useUIStore = create<UIState>()(
       sidebarCollapsed: false,
       setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
+      mobileOpen: false,
+      setMobileOpen: (v) => set({ mobileOpen: v }),
       density: 'comfortable',
       setDensity: (d) => {
         set({ density: d })

@@ -53,7 +53,7 @@ export function SettingsPage() {
     setSaving(true)
     try {
       await updateProfile(profileData.username, profileData.email)
-      toast.success('Profile saved locally')
+      toast.success('Profile saved')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to update profile')
     } finally {
@@ -74,7 +74,7 @@ export function SettingsPage() {
     setSaving(true)
     try {
       await changePassword(passwordData.current, passwordData.new)
-      toast.success('Password change stored on this session')
+      toast.success('Password changed')
       setPasswordData({ current: '', new: '', confirm: '' })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to change password')

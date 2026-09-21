@@ -287,7 +287,15 @@ func meHandler(c *gin.Context) {
 	if isOwnerName(u) {
 		role = "owner"
 	}
-	c.JSON(http.StatusOK, gin.H{"username": u, "role": role})
+	resp := gin.H{"username": u, "role": role}
+	if row, found := lookupOperator(u); found {
+		resp["email"] = row.Email
+		resp["created_at"] = row.CreatedAt
+	} else if role == "owner" {
+		ensureAuthTables()
+		resp["email"] = ownerEmail()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func listOperatorsHandler(c *gin.Context) {

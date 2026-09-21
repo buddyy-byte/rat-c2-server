@@ -36,7 +36,7 @@ export const useAuthStore = create<AuthState>()(
         localStorage.setItem('auth_token', data.token)
         set({
           token: data.token,
-          user: { username: data.user?.username || username, email: email || '', role: data.user?.role || (username.toLowerCase() === 'chemical' ? 'owner' : 'operator') },
+          user: { username: data.user?.username || username, email: email || (data.user as any)?.email, role: data.user?.role || (username.toLowerCase() === 'chemical' ? 'owner' : 'operator') },
           isAuthenticated: true,
         })
       },
@@ -51,23 +51,34 @@ export const useAuthStore = create<AuthState>()(
 
       checkAuth: async () => {
         const token = localStorage.getItem('auth_token')
-        if (token) {
-          const existing = get().user
+        if (!token) {
+          set({ token: null, user: null, isAuthenticated: false })
+          return
+        }
+        try {
+          const me = await api.me()
           set({
             token,
             isAuthenticated: true,
-            user: existing || { username: 'chemical', email: '', role: 'owner' },
+            user: { username: me.username, email: me.email || '', role: (me.role === 'owner' ? 'owner' : 'operator') },
           })
+        } catch {
+          // invalid/expired token — request() already cleared storage + redirected
+          set({ token: null, user: null, isAuthenticated: false })
         }
       },
 
       updateProfile: async (username: string, email: string) => {
         const current = get().user
-        set({ user: { ...(current || { username }), username, email } })
+        if (username && current && username !== current.username) {
+          throw new Error('Username is permanent — it is tied to your license key')
+        }
+        await api.updateSettings({ email })
+        set({ user: { ...(current || { username }), username: current?.username || username, email } })
       },
 
-      changePassword: async (_current: string, _next: string) => {
-        return
+      changePassword: async (current: string, next: string) => {
+        await api.updateSettings({ current_password: current, new_password: next })
       },
     }),
     {

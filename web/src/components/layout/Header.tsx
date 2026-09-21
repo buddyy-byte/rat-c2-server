@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Bell, Moon, Sun, User, LogOut, Settings, RefreshCw, CheckCheck, Trash2 } from 'lucide-react'
+import { Search, Bell, Moon, Sun, User, LogOut, Settings, RefreshCw, CheckCheck, Trash2, Menu } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAuthStore } from '@/stores/authStore'
@@ -19,7 +19,7 @@ export function Header() {
   const { user, logout } = useAuthStore()
   const { fetchAgents, agents } = useAgentStore()
   const { theme, toggleTheme } = useTheme()
-  const { notices, markAllRead, clearNotices, pushNotice, notifyPrefs } = useUIStore()
+  const { notices, markAllRead, clearNotices, pushNotice, notifyPrefs, setMobileOpen } = useUIStore()
   const [q, setQ] = React.useState('')
   const [refreshing, setRefreshing] = React.useState(false)
   const unread = notices.filter(n => !n.read).length
@@ -80,6 +80,15 @@ export function Header() {
   return (
     <header className="sticky top-0 z-30 h-16 bg-dark-900/80 backdrop-blur-xl border-b border-dark-700">
       <div className="flex h-full items-center justify-between px-4 md:px-6">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden shrink-0 text-dark-300"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open navigation"
+        >
+          <Menu className="w-5 h-5" />
+        </Button>
         <form
           className="flex items-center gap-3 flex-1 max-w-xl"
           onSubmit={(e) => { e.preventDefault(); runSearch(q) }}

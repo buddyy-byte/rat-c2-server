@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Toaster } from 'sonner'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { GradientBackground } from '@/components/ui/GradientBackground'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
@@ -39,8 +39,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="min-h-screen">
         <Sidebar />
         <div
-          className="min-h-screen flex flex-col transition-[margin-left] duration-300"
-          style={{ marginLeft: 'var(--sidebar-w, 16rem)' }}
+          className="min-h-screen flex flex-col transition-[margin-left] duration-300 ml-0 md:ml-[var(--sidebar-w,16rem)]"
         >
           <Header />
           <main className={cn('flex-1 overflow-auto min-w-0', pad)}>
@@ -50,6 +49,16 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
     </GradientBackground>
   )
+}
+
+// scroll the main pane back to top on every route change
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  React.useEffect(() => {
+    window.scrollTo(0, 0)
+    document.querySelectorAll('main, [data-scroll-region]').forEach((el) => el.scrollTo({ top: 0 }))
+  }, [pathname])
+  return null
 }
 
 function ThemeBoot() {
@@ -80,6 +89,7 @@ export function App() {
   return (
     <>
       <ThemeBoot />
+      <ScrollToTop />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route

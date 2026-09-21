@@ -1,39 +1,55 @@
 import * as React from "react"
 import { motion } from "framer-motion"
 import { GradientText } from '@/components/ui/GradientText'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
+import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs'
 import { useAuthStore } from '@/stores/authStore'
+import { api } from '@/services/api'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { Lock, User, Mail, Eye, EyeOff, Loader2, CheckCircle, AlertCircle, Key, Shield, Terminal } from "lucide-react"
-import { cn } from '@/lib/utils'
+import { Lock, User, Eye, EyeOff, Loader2, KeyRound, Terminal } from "lucide-react"
 
 export function LoginPage() {
   const navigate = useNavigate()
   const { login } = useAuthStore()
-  const [isRegister, setIsRegister] = React.useState(false)
+  const [mode, setMode] = React.useState<'login' | 'recover'>('login')
   const [showPassword, setShowPassword] = React.useState(false)
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
-  const [email, setEmail] = React.useState('')
+  const [license, setLicense] = React.useState('')
+  const [newPassword, setNewPassword] = React.useState('')
   const [loading, setLoading] = React.useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     try {
-      await login(username, password, isRegister, email)
-      toast.success(isRegister ? 'Account created!' : 'Welcome back!')
+      if (mode === 'login') {
+        await login(username, password)
+        toast.success('Welcome back!')
+      } else {
+        const res = await api.recover(license, newPassword)
+        useAuthStore.setState({
+          token: res.token,
+          isAuthenticated: true,
+          user: { username: res.user.username, role: (res.user.role === 'owner' ? 'owner' : 'operator') },
+        })
+        toast.success('Password reset — you are signed in')
+      }
       navigate('/')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Authentication failed')
     } finally {
       setLoading(false)
     }
+  }
+
+  const switchMode = (v: string) => {
+    setMode(v === 'recover' ? 'recover' : 'login')
+    setShowPassword(false)
   }
 
   return (
@@ -70,94 +86,125 @@ export function LoginPage() {
           {/* Form Card */}
           <Card className="card-hover">
             <CardContent className="p-6">
-              <Tabs value={isRegister ? 'register' : 'login'} onValueChange={v => setIsRegister(v === 'register')} className="w-full">
+              <Tabs value={mode} onValueChange={switchMode} className="w-full">
                 <TabsList className="grid w-full grid-cols-2 bg-dark-800/50 p-1 rounded-lg border border-dark-700 mb-6">
                   <TabsTrigger value="login" className="gap-2">
                     <Lock className="w-4 h-4" />
                     <span>Sign In</span>
                   </TabsTrigger>
-                  <TabsTrigger value="register" className="gap-2">
-                    <User className="w-4 h-4" />
-                    <span>Register</span>
+                  <TabsTrigger value="recover" className="gap-2">
+                    <KeyRound className="w-4 h-4" />
+                    <span>Recover</span>
                   </TabsTrigger>
                 </TabsList>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  {isRegister && (
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <div className="relative">
-                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
-                        <Input
-                          id="email"
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="you@domain.com"
-                          className="pl-10"
-                          required
-                        />
+                  {mode === 'login' ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="username">Username</Label>
+                        <div className="relative">
+                          <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                          <Input
+                            id="username"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            placeholder="Enter username"
+                            className="pl-10"
+                            required
+                            autoComplete="username"
+                          />
+                        </div>
                       </div>
-                    </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="password">Password</Label>
+                        <div className="relative">
+                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                          <Input
+                            id="password"
+                            type={showPassword ? 'text' : 'password'}
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="Enter password"
+                            className="pl-10 pr-10"
+                            required
+                            autoComplete="current-password"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                            onClick={() => setShowPassword(!showPassword)}
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="license">License key</Label>
+                        <div className="relative">
+                          <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                          <Input
+                            id="license"
+                            value={license}
+                            onChange={(e) => setLicense(e.target.value)}
+                            placeholder="UMBRA-XXXX-XXXX-XXXX-XXXX-XXXX"
+                            className="pl-10 font-mono"
+                            required
+                          />
+                        </div>
+                        <p className="text-xs text-dark-500">The key you saved after paying. It resets the password on the account it is bound to.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="newPassword">New password</Label>
+                        <div className="relative">
+                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
+                          <Input
+                            id="newPassword"
+                            type={showPassword ? 'text' : 'password'}
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="min 8 characters"
+                            className="pl-10 pr-10"
+                            required
+                            minLength={8}
+                            autoComplete="new-password"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                            onClick={() => setShowPassword(!showPassword)}
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                    </>
                   )}
-
-                  <div className="space-y-2">
-                    <Label htmlFor="username">Username</Label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
-                      <Input
-                        id="username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        placeholder="Enter username"
-                        className="pl-10"
-                        required
-                        autoComplete={isRegister ? 'new-password' : 'username'}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" />
-                      <Input
-                        id="password"
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Enter password"
-                        className="pl-10 pr-10"
-                        required
-                        autoComplete={isRegister ? 'new-password' : 'current-password'}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </Button>
-                    </div>
-                  </div>
 
                   <Button type="submit" className="w-full" size="lg" disabled={loading}>
                     {loading ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                        {isRegister ? 'Creating Account...' : 'Signing In...'}
+                        {mode === 'login' ? 'Signing In...' : 'Resetting...'}
                       </>
-                    ) : isRegister ? (
-                      <>
-                        <User className="w-5 h-5 mr-2" />
-                        Create Account
-                      </>
-                    ) : (
+                    ) : mode === 'login' ? (
                       <>
                         <Lock className="w-5 h-5 mr-2" />
                         Sign In
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound className="w-5 h-5 mr-2" />
+                        Reset &amp; Sign In
                       </>
                     )}
                   </Button>
@@ -165,43 +212,22 @@ export function LoginPage() {
 
                 <div className="mt-6 text-center">
                   <p className="text-sm text-dark-400">
-                    {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
+                    {mode === 'login' ? 'Lost your password?' : "Got your credentials?"}{' '}
                     <Button
                       variant="ghost"
                       size="sm"
                       className="text-accent-400 hover:text-accent-300 p-0"
-                      onClick={() => setIsRegister(!isRegister)}
+                      onClick={() => switchMode(mode === 'login' ? 'recover' : 'login')}
                     >
-                      {isRegister ? 'Sign In' : 'Register'}
+                      {mode === 'login' ? 'Recover with key' : 'Sign In'}
                     </Button>
                   </p>
                 </div>
               </Tabs>
 
-              <p className="mt-6 text-xs text-dark-500 text-center">Operator login is private. Register creates extra operators.</p>
+              <p className="mt-6 text-xs text-dark-500 text-center">Seats are sold on the landing page — accounts are created there with your license key.</p>
             </CardContent>
           </Card>
-
-          {/* Features */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.4 }}
-            className="mt-8 grid grid-cols-3 gap-4 text-center"
-          >
-            <div className="p-4 bg-dark-800/50 rounded-xl border border-dark-700">
-              <Shield className="w-6 h-6 text-accent-400 mx-auto mb-2" />
-              <p className="text-xs text-dark-400">Evasion Techniques</p>
-            </div>
-            <div className="p-4 bg-dark-800/50 rounded-xl border border-dark-700">
-              <Key className="w-6 h-6 text-accent-400 mx-auto mb-2" />
-              <p className="text-xs text-dark-400">Encrypted Comms</p>
-            </div>
-            <div className="p-4 bg-dark-800/50 rounded-xl border border-dark-700">
-              <Terminal className="w-6 h-6 text-accent-400 mx-auto mb-2" />
-              <p className="text-xs text-dark-400">Full Control</p>
-            </div>
-          </motion.div>
         </div>
       </motion.div>
     </div>
