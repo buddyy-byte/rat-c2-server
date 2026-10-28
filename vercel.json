@@ -1,6 +1,6 @@
 {
   "framework": "go",
-  "buildCommand": "go build -ldflags '-s -w' -o server ./cmd/server",
+  "buildCommand": "go build -buildvcs=false -ldflags '-s -w' -o server ./cmd/server",
   "headers": [
     {
       "source": "/(.*)",
