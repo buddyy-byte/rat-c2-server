@@ -38,10 +38,16 @@ func SetDB(d *sqlx.DB) {
 	db = d
 	if d != nil {
 		hydrateSeats()
+		hydrateLive()
 	}
 }
 
 func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queue, fileMgr *filetransfer.Manager, lateralMgr interface{}, evasionMgr interface{}, wsHub *ws.Hub, config interface{}) {
+	agentMgrRef = agentMgr
+	taskQueueRef = taskQueue
+	// The durable agent snapshot is hydrated in SetDB, which runs after the
+	// manager was built, so pick the restored rows back up here.
+	agentMgr.Reload()
 	api := r.Group("/api")
 	{
 		// Auth
@@ -60,6 +66,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 			op.GET("/operators", listOperatorsHandler)
 			op.GET("/operators/:id", getOperatorHandler)
 			op.GET("/stats", statsHandler(agentMgr, taskQueue))
+			op.GET("/live", liveHandler(agentMgr))
 
 			op.GET("/agents", getAgentsHandler(agentMgr))
 			op.GET("/agents/:id", getAgentHandler(agentMgr))
@@ -166,6 +173,7 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gi
 			return
 		}
 		agentMgr.UpdateLastSeen(a.ID)
+		saveLive()
 
 		switch msg.Type {
 		case "result":
@@ -1372,6 +1380,7 @@ func agentHTTPBeaconHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 		}
 
 		log.Printf("[AgentHTTP] Agent registered: %s (%s) from %s", agt.ID, agt.Hostname, ip)
+		saveLiveNow()
 
 		// Return agent ID and session ID for the agent to use
 		c.JSON(http.StatusOK, gin.H{

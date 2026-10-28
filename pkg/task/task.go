@@ -50,8 +50,11 @@ func NewQueue(db *sqlx.DB, agentMgr *agent.Manager) *Queue {
 func (q *Queue) loadPending() {
 	var tasks []Task
 	err := q.db.Select(&tasks, `
-		SELECT * FROM tasks 
-		WHERE status IN ('pending', 'sent') 
+		SELECT id, agent_id, COALESCE(command,'') as command, COALESCE(args,'') as args,
+			status, COALESCE(result,'') as result, COALESCE(result_code,0) as result_code,
+			created_at, sent_at, completed_at, priority, retries, max_retries
+		FROM tasks
+		WHERE status IN ('pending', 'sent')
 		ORDER BY priority DESC, created_at ASC
 	`)
 	if err != nil {
@@ -169,21 +172,36 @@ func (q *Queue) EnqueueUpdate(agentID, url string, priority int) (*Task, error) 
 	return q.Enqueue(agentID, "update", map[string]string{"url": url}, priority)
 }
 
+// taskCols COALESCEs nullable text/int columns: freshly-inserted rows have
+// NULL result/args, which sqlx cannot scan into Task's non-pointer fields.
+// SELECT * silently broke GetPending → every HTTP beacon delivered zero tasks.
+const taskCols = `id, agent_id, COALESCE(command,'') as command, COALESCE(args,'') as args,
+	status, COALESCE(result,'') as result, COALESCE(result_code,0) as result_code,
+	created_at, sent_at, completed_at, priority, retries, max_retries`
+
 func (q *Queue) Get(id string) (*Task, error) {
 	var t Task
-	err := q.db.Get(&t, "SELECT * FROM tasks WHERE id = ?", id)
+	err := q.db.Get(&t, "SELECT "+taskCols+" FROM tasks WHERE id = ?", id)
 	return &t, err
 }
 
 func (q *Queue) GetByAgent(agentID string, limit int) ([]*Task, error) {
 	var tasks []*Task
-	err := q.db.Select(&tasks, "SELECT * FROM tasks WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?", agentID, limit)
+	err := q.db.Select(&tasks, "SELECT "+taskCols+" FROM tasks WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?", agentID, limit)
 	return tasks, err
 }
 
 func (q *Queue) GetPending(agentID string) ([]*Task, error) {
 	var tasks []*Task
-	err := q.db.Select(&tasks, "SELECT * FROM tasks WHERE agent_id = ? AND status IN ('pending', 'sent') ORDER BY priority DESC, created_at ASC", agentID)
+	err := q.db.Select(&tasks, "SELECT "+taskCols+" FROM tasks WHERE agent_id = ? AND status IN ('pending', 'sent') ORDER BY priority DESC, created_at ASC", agentID)
+	return tasks, err
+}
+
+// GetRecent returns the newest tasks across every agent in one query — used by
+// /api/live so the console does not fan out a per-agent request to build one view.
+func (q *Queue) GetRecent(limit int) ([]*Task, error) {
+	var tasks []*Task
+	err := q.db.Select(&tasks, "SELECT "+taskCols+" FROM tasks ORDER BY created_at DESC LIMIT ?", limit)
 	return tasks, err
 }
 

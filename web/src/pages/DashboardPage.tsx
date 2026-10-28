@@ -1,9 +1,11 @@
 import * as React from "react"
 import { motion } from "framer-motion"
+import { useNavigate } from 'react-router-dom'
 import { GradientText } from '@/components/ui/GradientText'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { useAgentStore } from '@/stores/agentStore'
+import { LiveIndicator } from '@/components/layout/LiveIndicator'
 import { useAuthStore } from '@/stores/authStore'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
@@ -43,21 +45,17 @@ const quickActions = [
 ]
 
 export function DashboardPage() {
-  const { agents, fetchAgents, loading, wsConnected } = useAgentStore()
+  const { agents, stats: live, liveState, lastSync, recentTasks, refreshLive } = useAgentStore()
   const { user } = useAuthStore()
+  const navigate = useNavigate()
 
-  const [stats, setStats] = React.useState({ pending: 0, completed: 0 })
-  React.useEffect(() => {
-    fetchAgents()
-    const interval = setInterval(() => fetchAgents(), 10000)
-    const pull = () => api.getStats().then(s => setStats({ pending: s.pending_tasks, completed: s.completed_today })).catch(() => {})
-    pull()
-    const st = setInterval(pull, 10000)
-    return () => { clearInterval(interval); clearInterval(st) }
-  }, [fetchAgents])
+  const stats = {
+    pending: live?.tasks_pending ?? 0,
+    completed: live?.tasks_completed ?? 0,
+  }
 
-  const activeAgents = agents.filter(a => a.Status === 'active').length
-  const totalAgents = agents.length
+  const activeAgents = live?.agents_active ?? agents.filter(a => a.Status === 'active').length
+  const totalAgents = live?.agents_total ?? agents.length
   const recentAgents = agents.slice(0, 5)
 
   return (
@@ -76,15 +74,9 @@ export function DashboardPage() {
           <p className="text-dark-400 mt-1">Welcome back, {user?.username || 'operator'}</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className={cn(
-            "flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium",
-            wsConnected ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
-          )}>
-            <span className={cn("w-2 h-2 rounded-full", wsConnected ? "bg-green-400 animate-pulse" : "bg-red-400")} />
-            {wsConnected ? 'Connected' : 'Disconnected'}
-          </div>
-          <Button onClick={fetchAgents} disabled={loading} variant="outline" size="sm">
-            <Loader2 className={cn("w-4 h-4", loading && "animate-spin")} />
+          <LiveIndicator className="hidden sm:flex" />
+          <Button onClick={() => void refreshLive()} variant="outline" size="sm">
+            <Loader2 className="w-4 h-4" />
             Refresh
           </Button>
         </div>
@@ -145,7 +137,7 @@ export function DashboardPage() {
               {quickActions.map((action, index) => (
                 <motion.button
                   key={action.name}
-                  onClick={() => window.location.href = action.href}
+                  onClick={() => navigate(action.href)}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3, delay: 0.05 * index }}
@@ -178,7 +170,7 @@ export function DashboardPage() {
                   </CardTitle>
                   <CardDescription>Latest connected agents</CardDescription>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => window.location.href = '/agents'}>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/agents')}>
                   View All
                 </Button>
               </div>
@@ -192,7 +184,7 @@ export function DashboardPage() {
                   </div>
                   <h3 className="text-lg font-medium text-dark-300 mb-1">No agents connected</h3>
                   <p className="text-dark-500 mb-4">Deploy a payload to get started</p>
-                  <Button onClick={() => window.location.href = '/payloads'} size="lg">
+                  <Button onClick={() => navigate('/payloads')} size="lg">
                     <Plus className="w-4 h-4 mr-2" />
                     Build Payload
                   </Button>
@@ -229,7 +221,7 @@ export function DashboardPage() {
                         <span className="text-xs text-dark-500">
                           {agent.LastSeen ? formatDistanceToNow(new Date(agent.LastSeen), { addSuffix: true }) : 'Never'}
                         </span>
-                        <Button variant="ghost" size="icon" onClick={() => window.location.href = `/agents/${agent.ID}`}>
+                        <Button variant="ghost" size="icon" onClick={() => navigate(`/agents/${agent.ID}`)}>
                           <MoreVertical className="w-4 h-4" />
                         </Button>
                       </div>

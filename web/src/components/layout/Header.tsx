@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAuthStore } from '@/stores/authStore'
 import { useAgentStore } from '@/stores/agentStore'
+import { LiveIndicator } from '@/components/layout/LiveIndicator'
 import { useTheme } from '@/hooks/useTheme'
 import { useUIStore } from '@/stores/uiStore'
 import {
@@ -17,7 +18,7 @@ import { cn } from '@/lib/utils'
 export function Header() {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
-  const { fetchAgents, agents } = useAgentStore()
+  const { agents, refreshLive } = useAgentStore()
   const { theme, toggleTheme } = useTheme()
   const { notices, markAllRead, clearNotices, pushNotice, notifyPrefs, setMobileOpen } = useUIStore()
   const [q, setQ] = React.useState('')
@@ -43,7 +44,7 @@ export function Header() {
   const refresh = async () => {
     setRefreshing(true)
     try {
-      await fetchAgents()
+      await refreshLive()
       toast.success('Refreshed')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'refresh failed')
@@ -107,6 +108,7 @@ export function Header() {
         </form>
 
         <div className="flex items-center gap-1">
+          <LiveIndicator className="hidden sm:flex mr-1" />
           <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </Button>

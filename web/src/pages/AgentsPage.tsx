@@ -26,16 +26,13 @@ import {
 import { cn } from '@/lib/utils'
 
 export function AgentsPage() {
-  const { agents, fetchAgents, loading, wsConnected, selectedAgent, setSelectedAgent } = useAgentStore()
+  const { agents, loading, selectedAgent, setSelectedAgent, refreshLive, liveState } = useAgentStore()
   const [searchTerm, setSearchTerm] = React.useState(() => new URLSearchParams(window.location.search).get('q') || '')
-  const [statusFilter, setStatusFilter] = React.useState<'all' | 'active' | 'idle' | 'offline'>('all')
+  const [statusFilter, setStatusFilter] = React.useState<'all' | 'active' | 'stale' | 'idle' | 'offline'>('all')
   const [viewMode, setViewMode] = React.useState<'grid' | 'list'>('grid')
 
-  React.useEffect(() => {
-    fetchAgents()
-    const interval = setInterval(() => fetchAgents(), 15000)
-    return () => clearInterval(interval)
-  }, [fetchAgents])
+  // No local timer here — the shell-wide live feed already refreshes the fleet,
+  // so this page renders whatever the current snapshot holds.
 
   const filteredAgents = agents.filter((agent) => {
     const matchesSearch = 
@@ -71,8 +68,8 @@ export function AgentsPage() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => fetchAgents()} disabled={loading}>
-              <Loader2 className={cn("w-4 h-4", loading && "animate-spin")} />
+            <Button variant="outline" size="sm" onClick={() => void refreshLive()} disabled={loading}>
+              <Loader2 className={cn("w-4 h-4", (loading || liveState === 'idle') && "animate-spin")} />
               Refresh
             </Button>
           </div>

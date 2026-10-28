@@ -78,6 +78,12 @@ func (m *Manager) loadFromDB() {
 	log.Printf("[agent] Loaded %d agents from DB", len(m.agents))
 }
 
+func (m *Manager) Reload() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.loadFromDB()
+}
+
 func (m *Manager) Register(reg *RegistrationData, wsConn *websocket.Conn, ip string) (*Agent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -290,7 +296,9 @@ func (m *Manager) UpdateLastSeen(id string) {
 	defer m.mu.Unlock()
 	if a, ok := m.agents[id]; ok {
 		a.LastSeen = time.Now()
-		go m.persistAgent(a)
+		// Synchronous: on a serverless host a detached goroutine is killed when
+		// the response is written, so the write had to happen before we return.
+		m.persistAgent(a)
 	}
 }
 

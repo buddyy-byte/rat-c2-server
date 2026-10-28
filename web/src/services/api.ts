@@ -2,6 +2,30 @@ import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keyst
 import { normalizeAgent, normalizeAgents } from '@/lib/utils'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? 'http://localhost:8080' : '')
+
+export type LiveStats = {
+  agents_total: number
+  agents_active: number
+  agents_stale: number
+  agents_offline: number
+  agents_elevated: number
+  tasks_pending: number
+  tasks_completed: number
+  tasks_failed: number
+  uptime_seconds: number
+}
+
+export type LiveSnapshot = {
+  ts: string
+  durable: boolean
+  store: string
+  stats: LiveStats
+  agents: any[]
+  tasks: any[]
+  ws: boolean
+  poll_ms: number
+  server_ok: boolean
+}
 function deriveWsBase(): string {
   if (import.meta.env.VITE_WS_BASE) return import.meta.env.VITE_WS_BASE as string
   if (API_BASE) {
@@ -62,12 +86,15 @@ class ApiClient {
     })
 
     if (response.status === 401) {
-      if (!endpoint.includes('/auth/login')) {
-        this.setToken(null)
-        window.location.href = '/login'
-      }
+      // Do NOT clear the token and bounce to /login here. On a serverless host a
+      // cold start can answer the first poll with 401 while the session is still
+      // perfectly valid, and the live poll runs every few seconds — a redirect in
+      // this branch turns one hiccup into an instant logout loop. PrivateRoute
+      // already gates the SPA; checkAuth() owns the real sign-out.
       const error = await response.json().catch(() => ({ error: 'Unauthorized', message: 'Unauthorized' }))
-      throw new Error(error.error || error.message || 'Unauthorized')
+      const err = new Error(error.error || error.message || 'Unauthorized')
+      ;(err as Error & { status?: number }).status = 401
+      throw err
     }
 
     if (!response.ok) {
@@ -149,6 +176,12 @@ class ApiClient {
 
   async getStats(): Promise<{ active_agents: number; total_agents: number; pending_tasks: number; completed_today: number; uptime_ms: number }> {
     return this.request('/api/stats')
+  }
+
+  // One poll target for the whole console: agents + stats + recent tasks in a
+  // single response, so no two panels on screen disagree about the same moment.
+  async live(): Promise<LiveSnapshot> {
+    return this.request<LiveSnapshot>('/api/live')
   }
 
   // Agents

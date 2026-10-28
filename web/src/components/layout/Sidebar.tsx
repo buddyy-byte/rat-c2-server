@@ -42,7 +42,7 @@ function fmtUptime(ms: number) {
 export function Sidebar() {
   const location = useLocation()
   const { logout, user } = useAuthStore()
-  const { agents, fetchAgents } = useAgentStore()
+  const { agents, stats: liveStats } = useAgentStore()
   const collapsed = useUIStore(s => s.sidebarCollapsed)
   const toggle = useUIStore(s => s.toggleSidebar)
   const mobileOpen = useUIStore(s => s.mobileOpen)
@@ -51,28 +51,17 @@ export function Sidebar() {
   const startedAt = useUIStore(s => s.startedAt)
   const isOwner = (user?.role === 'owner') || (user?.username || '').toLowerCase() === 'chemical'
   const items = navigation.filter(item => !('ownerOnly' in item && item.ownerOnly) || isOwner)
-  const [pending, setPending] = React.useState(0)
-  const [serverUptime, setServerUptime] = React.useState(0)
   const [now, setNow] = React.useState(Date.now())
 
   React.useEffect(() => {
-    fetchAgents()
+    // Sidebar just reads the shared snapshot — no second stats poll.
     const tick = setInterval(() => setNow(Date.now()), 1000)
-    const poll = setInterval(async () => {
-      try {
-        const s = await api.getStats()
-        setPending(s.pending_tasks || 0)
-        setServerUptime(s.uptime_ms || 0)
-      } catch { /* ignore */ }
-    }, 8000)
-    api.getStats().then(s => {
-      setPending(s.pending_tasks || 0)
-      setServerUptime(s.uptime_ms || 0)
-    }).catch(() => {})
-    return () => { clearInterval(tick); clearInterval(poll) }
-  }, [fetchAgents])
+    return () => { clearInterval(tick) }
+  }, [])
 
-  const active = agents.filter(a => a.Status === 'active').length
+  const active = liveStats?.agents_active ?? agents.filter(a => a.Status === 'active').length
+  const pending = liveStats?.tasks_pending ?? 0
+  const serverUptime = (liveStats?.uptime_seconds ?? 0) * 1000
   const uptime = serverUptime > 0 ? serverUptime : (now - startedAt)
 
   const linkClass = (active: boolean, disabled?: boolean) =>

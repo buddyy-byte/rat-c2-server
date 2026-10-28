@@ -31,9 +31,17 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const collapsed = useUIStore(s => s.sidebarCollapsed)
   const density = useUIStore(s => s.density)
   const pad = density === 'compact' ? 'p-3 md:p-4' : density === 'spacious' ? 'p-6 md:p-10' : 'p-4 md:p-6 lg:p-8'
+  const startLive = useAgentStore(s => s.startLive)
+  const stopLive = useAgentStore(s => s.stopLive)
   React.useEffect(() => {
     document.documentElement.style.setProperty('--sidebar-w', collapsed ? '5rem' : '16rem')
   }, [collapsed])
+  // One live poll for the whole authenticated shell — every page reads the same
+  // snapshot instead of each panel running its own timer.
+  React.useEffect(() => {
+    startLive()
+    return () => stopLive()
+  }, [startLive, stopLive])
   return (
     <GradientBackground>
       <div className="min-h-screen">

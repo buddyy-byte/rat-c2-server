@@ -1,6 +1,6 @@
 import { create } from 'zustand'
-import { api } from '@/services/api'
-import { normalizeAgent } from '@/lib/utils'
+import { api, type LiveStats } from '@/services/api'
+import { normalizeAgent, normalizeAgents } from '@/lib/utils'
 import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module } from '@/types'
 
 // per-connection cache so WS status flips fire notifications exactly once
@@ -45,6 +45,19 @@ interface AgentState {
   error: string | null
   wsConnected: boolean
 
+  // live feed — one shared poll drives every panel on screen
+  stats: LiveStats | null
+  recentTasks: Task[]
+  liveState: 'idle' | 'live' | 'paused' | 'error'
+  liveError: string | null
+  lastSync: number
+  durable: boolean
+  storeKind: string
+  pollMs: number
+  startLive: () => void
+  stopLive: () => void
+  refreshLive: () => Promise<void>
+
   fetchAgents: () => Promise<void>
   fetchAgent: (id: string) => Promise<void>
   setSelectedAgent: (agent: Agent | null) => void
@@ -77,6 +90,30 @@ interface AgentState {
   onNewTask: (handler: (task: Task) => void) => () => void
 }
 
+// The live poll lives at module scope so every mounted component shares one
+// timer. Five panels each running their own setInterval is what made the old
+// dashboard show the same fleet at five different moments.
+let liveTimer: ReturnType<typeof setInterval> | null = null
+let liveInFlight = false
+let liveWired = false
+const liveTick = () => {
+  if (typeof document !== 'undefined' && document.hidden) {
+    const s = useAgentStore.getState()
+    if (s.liveState === 'live') useAgentStore.setState({ liveState: 'paused' })
+    return
+  }
+  void useAgentStore.getState().refreshLive()
+}
+const wireLiveEvents = () => {
+  if (liveWired || typeof document === 'undefined') return
+  liveWired = true
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) liveTick()
+  })
+  window.addEventListener('focus', liveTick)
+  window.addEventListener('online', liveTick)
+}
+
 export const useAgentStore = create<AgentState>((set, get) => ({
   agents: [],
   selectedAgent: null,
@@ -94,6 +131,67 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   loading: false,
   error: null,
   wsConnected: false,
+
+  stats: null,
+  recentTasks: [],
+  liveState: 'idle',
+  liveError: null,
+  lastSync: 0,
+  durable: false,
+  storeKind: 'unknown',
+  pollMs: 2500,
+
+  refreshLive: async () => {
+    if (liveInFlight) return
+    liveInFlight = true
+    try {
+      const snap = await api.live()
+      set({
+        agents: normalizeAgents(snap.agents || []),
+        recentTasks: (snap.tasks || []).map(normalizeTask),
+        stats: snap.stats,
+        durable: !!snap.durable,
+        storeKind: snap.store || 'memory',
+        pollMs: snap.poll_ms || 2500,
+        liveState: 'live',
+        liveError: null,
+        lastSync: Date.now(),
+        loading: false,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'live poll failed'
+      const unauthorized = (e as Error & { status?: number })?.status === 401
+      set({ liveState: 'error', liveError: msg, loading: false })
+      if (unauthorized) {
+        // Session really is gone — let checkAuth own the sign-out rather than
+        // hard-redirecting every few seconds from inside a poll.
+        void import('@/stores/authStore').then(({ useAuthStore }) => {
+          useAuthStore.getState().checkAuth()
+        })
+      }
+    } finally {
+      liveInFlight = false
+    }
+  },
+
+  startLive: () => {
+    wireLiveEvents()
+    if (liveTimer !== null) return
+    const period = () => get().pollMs || 2500
+    const loop = () => {
+      liveTick()
+      liveTimer = setTimeout(loop, period()) as unknown as ReturnType<typeof setInterval>
+    }
+    liveTimer = setTimeout(loop, 0) as unknown as ReturnType<typeof setInterval>
+  },
+
+  stopLive: () => {
+    if (liveTimer !== null) {
+      clearTimeout(liveTimer as unknown as ReturnType<typeof setTimeout>)
+      liveTimer = null
+    }
+    set({ liveState: 'idle' })
+  },
 
   fetchAgents: async () => {
     set({ loading: true, error: null })
