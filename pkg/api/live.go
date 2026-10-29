@@ -239,6 +239,11 @@ func hydrateLive() {
 		if a == nil || a.ID == "" || a.HwID == "" {
 			continue
 		}
+		if a.Status == "dead" {
+			// Removed operators stay removed across cold starts.
+			_, _ = db.Exec(`DELETE FROM agents WHERE id = ?`, a.ID)
+			continue
+		}
 		_, err := db.Exec(`
 			INSERT INTO agents
 			(id, session_id, hostname, username, os_version, arch, pid, privileges, hw_id, build_version,

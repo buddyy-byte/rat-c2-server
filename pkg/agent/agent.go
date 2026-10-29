@@ -335,7 +335,10 @@ func (m *Manager) Remove(id string) {
 	defer m.mu.Unlock()
 	if a, ok := m.agents[id]; ok {
 		a.Status = "dead"
-		go m.persistAgent(a)
+		// Synchronous: a detached goroutine is killed when the serverless
+		// response is written, so an async persist here meant a deleted agent
+		// came straight back from the durable snapshot on the next cold start.
+		m.persistAgent(a)
 		delete(m.agents, id)
 	}
 }
