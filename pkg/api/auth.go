@@ -78,6 +78,25 @@ func bearerUser(c *gin.Context) string {
 	return u
 }
 
+// sessionUser is bearerUser plus a ?token= fallback. A download must be able to
+// be triggered by a plain <a href> / browser navigation, which cannot attach an
+// Authorization header — without this, every "download" link 401s and the file
+// silently never opens. Same trade-off the operator WebSocket already makes.
+func sessionUser(c *gin.Context) string {
+	if u := bearerUser(c); u != "" {
+		return u
+	}
+	tok := strings.TrimSpace(c.Query("token"))
+	if tok == "" {
+		return ""
+	}
+	u, ok := lookupToken(tok)
+	if !ok {
+		return ""
+	}
+	return u
+}
+
 func isOwnerName(u string) bool {
 	return strings.EqualFold(strings.TrimSpace(u), ownerUser())
 }

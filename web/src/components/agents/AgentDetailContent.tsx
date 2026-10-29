@@ -29,6 +29,7 @@ import {
   Search,
   Filter,
   ChevronUp,
+  ChevronRight,
   ChevronDown,
   Minimize2,
   Maximize2,
@@ -55,6 +56,7 @@ import {
 import { formatDistanceToNow } from 'date-fns'
 import { motion } from 'framer-motion'
 import { api } from '@/services/api'
+import { toast } from 'sonner'
 
 interface AgentDetailContentProps {
   agentId: string
@@ -206,6 +208,17 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
   const [selectedScreenshot, setSelectedScreenshot] = React.useState<string | null>(null)
   const [filePath, setFilePath] = React.useState('/')
   const [searchTerm, setSearchTerm] = React.useState('')
+
+  // Real file browser. Listings and deletes run through the agent's shell
+  // channel; downloads create a transfer on the server and the agent pushes the
+  // bytes back over /beacon. The old tab listed server-side transfer rows and
+  // its download button had no handler at all, so nothing ever opened.
+  type DirEntry = { name: string; isDir: boolean; size: number; modified: string }
+  const [dirEntries, setDirEntries] = React.useState<DirEntry[]>([])
+  const [listingBusy, setListingBusy] = React.useState(false)
+  const [dirError, setDirError] = React.useState<string | null>(null)
+  const [downloadIds, setDownloadIds] = React.useState<Record<string, string>>({})
+  const [busyPath, setBusyPath] = React.useState<string | null>(null)
 
   // Fetch data based on mode
   React.useEffect(() => {
@@ -409,6 +422,98 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
     </div>
   )
 
+  const pollTask = async (id: string, timeoutMs: number) => {
+    const started = Date.now()
+    while (Date.now() - started < timeoutMs) {
+      await new Promise(r => setTimeout(r, 700))
+      try {
+        const t: any = await api.getTask(id)
+        const st = t?.status ?? t?.Status
+        if (st === 'completed' || st === 'failed') {
+          return { status: String(st), output: String(t?.result ?? t?.Output ?? '') }
+        }
+      } catch { /* keep polling */ }
+    }
+    return null
+  }
+
+  const openDir = async (path: string) => {
+    if (!path.trim()) return
+    setListingBusy(true); setDirError(null)
+    try {
+      const q = path.replace(/'/g, "''")
+      const ps = `powershell -nop -c "Get-ChildItem -LiteralPath '${q}' -Force | ForEach-Object { [pscustomobject]@{ n=$_.Name; d=$_.PSIsContainer; s=$_.Length; t=$_.LastWriteTime.ToString('o') } } | ConvertTo-Json -Compress"`
+      const task: any = await executeShell(agentId, ps)
+      const done = await pollTask(task?.ID ?? task?.id, 25000)
+      if (!done) { setDirError('listing timed out — the agent has to be beaconing to browse'); return }
+      if (done.status === 'failed') { setDirError('listing failed on the host'); return }
+      const raw = done.output.trim()
+      setFilePath(path)
+      if (!raw) { setDirEntries([]); return }
+      const parsed = JSON.parse(raw)
+      const arr = Array.isArray(parsed) ? parsed : [parsed]
+      setDirEntries(
+        arr
+          .map((e: any) => ({
+            name: String(e?.n ?? ''),
+            isDir: !!e?.d,
+            size: Number(e?.s) || 0,
+            modified: String(e?.t ?? ''),
+          }))
+          .filter((e: DirEntry) => e.name)
+          .sort((a: DirEntry, b: DirEntry) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
+      )
+    } catch (err) {
+      setDirError(err instanceof Error ? err.message : 'listing failed')
+    } finally {
+      setListingBusy(false)
+    }
+  }
+
+  const startDownload = async (remotePath: string) => {
+    setBusyPath(remotePath); setDirError(null)
+    try {
+      const res: any = await api.downloadFile(agentId, remotePath)
+      const ft = res?.file_transfer ?? res
+      const id = ft?.ID ?? ft?.id
+      if (!id) throw new Error('server returned no transfer id')
+      setDownloadIds(prev => ({ ...prev, [remotePath]: id }))
+      toast.success('Pull started', { description: remotePath })
+      setTimeout(() => { void fetchFileTransfers(agentId) }, 1500)
+    } catch (err) {
+      const m = err instanceof Error ? err.message : 'download failed'
+      setDirError(m)
+      toast.error('Download failed', { description: m })
+    } finally {
+      setBusyPath(null)
+    }
+  }
+
+  const deleteRemote = async (remotePath: string) => {
+    if (!window.confirm(`Delete ${remotePath} on the host?`)) return
+    setBusyPath(remotePath)
+    try {
+      await executeShell(agentId, `del /f /q "${remotePath}"`)
+      toast.success('Delete queued', { description: remotePath })
+      setTimeout(() => { void openDir(filePath) }, 1500)
+    } catch (err) {
+      toast.error('Delete failed', { description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setBusyPath(null)
+    }
+  }
+
+  const parentPath = (p: string) => {
+    const norm = p.replace(/\\+$/, '')
+    const idx = norm.lastIndexOf('\\')
+    if (idx < 0) return p
+    if (idx <= 1) return norm.slice(0, idx + 1)
+    return norm.slice(0, idx)
+  }
+
+  const joinPath = (base: string, name: string) =>
+    base.endsWith('\\') ? `${base}${name}` : `${base}\\${name}`
+
   const renderFiles = () => (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
@@ -417,79 +522,145 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
           File Browser
         </CardTitle>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => fetchFileTransfers(agentId)}>
-            <RefreshCw className="w-4 h-4" />
+          <Button variant="outline" size="sm" onClick={() => void openDir(filePath)} disabled={listingBusy}>
+            <RefreshCw className={cn("w-4 h-4", listingBusy && "animate-spin")} />
+            List
           </Button>
         </div>
       </div>
-      
+
       {/* Path Navigation */}
       <div className="flex items-center gap-2 mb-4 p-3 bg-dark-900/50 rounded-lg border border-dark-700">
-        <Folder className="w-4 h-4 text-dark-400" />
+        <Button variant="ghost" size="sm" onClick={() => void openDir(parentPath(filePath))} title="Up one level">
+          <ChevronUp className="w-4 h-4" />
+        </Button>
+        <Folder className="w-4 h-4 text-dark-400 shrink-0" />
         <Input
           value={filePath}
           onChange={(e) => setFilePath(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && fetchFileTransfers(agentId)}
-          placeholder="Enter path..."
+          onKeyDown={(e) => e.key === 'Enter' && openDir(filePath)}
+          placeholder="C:\Users"
           className="bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 flex-1 text-dark-100 placeholder-dark-500"
         />
-        <Button variant="outline" size="sm" onClick={() => fetchFileTransfers(agentId)}>
-          <RefreshCw className="w-4 h-4" />
+        <Button variant="outline" size="sm" onClick={() => void openDir(filePath)} disabled={listingBusy}>
+          Go
         </Button>
       </div>
 
-      {fileTransfers.length === 0 ? (
+      {dirError && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300">
+          {dirError}
+        </div>
+      )}
+
+      {listingBusy ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin text-accent-400" />
+            <p className="text-sm text-dark-400">Listing {filePath}…</p>
+          </div>
+        </div>
+      ) : dirEntries.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
           <Card className="card-hover text-center p-8">
             <FileText className="w-16 h-16 text-dark-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-dark-300 mb-1">No files found</h3>
-            <p className="text-dark-500 mb-4">Navigate to a directory or upload files</p>
+            <h3 className="text-lg font-medium text-dark-300 mb-1">Nothing listed yet</h3>
+            <p className="text-dark-500 mb-4">Enter a path and press Go — e.g. C:\Users</p>
+            <Button variant="outline" size="sm" onClick={() => void openDir('C:\\')}>List C:\</Button>
           </Card>
         </div>
       ) : (
         <ScrollArea className="flex-1">
           <div className="space-y-1">
-            {fileTransfers.map((file) => (
-              <motion.div
-                key={file.ID}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="flex items-center gap-3 p-3 bg-dark-900/50 rounded-lg border border-dark-700 hover:border-accent-500/30 transition-all group"
-              >
-                <div className={cn("p-2 rounded-lg", file.Type === 'download' ? 'bg-blue-500/10' : 'bg-green-500/10')}>
-                  {file.Type === 'download' ? (
-                    <Download className="w-5 h-5 text-blue-400" />
-                  ) : (
-                    <File className="w-5 h-5 text-green-400" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-dark-100 truncate">{file.Path.split('/').pop() || file.Path}</p>
-                  <p className="text-xs text-dark-400 font-mono truncate">{file.Path}</p>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-dark-500">
-                  <span className="font-mono">{(file.Size / 1024).toFixed(1)} KB</span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-xs font-medium",
-                    file.Status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                    file.Status === 'in_progress' ? 'bg-yellow-500/20 text-yellow-400' :
-                    'bg-red-500/20 text-red-400'
-                  )}>
-                    {file.Status}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-dark-400 hover:text-accent-400">
-                    <Download className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-dark-400 hover:text-red-400">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </motion.div>
-            ))}
+            {dirEntries.map((file) => {
+              const full = joinPath(filePath, file.name)
+              const transferId = downloadIds[full]
+              return (
+                <motion.div
+                  key={full}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="flex items-center gap-3 p-3 bg-dark-900/50 rounded-lg border border-dark-700 hover:border-accent-500/30 transition-all"
+                >
+                  <div className={cn("p-2 rounded-lg", file.isDir ? 'bg-yellow-500/10' : 'bg-blue-500/10')}>
+                    {file.isDir ? <Folder className="w-5 h-5 text-yellow-400" /> : <File className="w-5 h-5 text-blue-400" />}
+                  </div>
+                  <button
+                    className="flex-1 min-w-0 text-left"
+                    onClick={() => file.isDir && void openDir(full)}
+                    title={full}
+                  >
+                    <p className="font-medium text-dark-100 truncate">{file.name}</p>
+                    <p className="text-xs text-dark-500 font-mono truncate">{full}</p>
+                  </button>
+                  <div className="flex items-center gap-2 text-xs text-dark-500 shrink-0">
+                    {!file.isDir && <span className="font-mono">{(file.size / 1024).toFixed(1)} KB</span>}
+                    {file.modified && <span>{new Date(file.modified).toLocaleString()}</span>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {!file.isDir && (
+                      transferId ? (
+                        <a href={api.fileDownloadUrl(transferId)} download={file.name}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-green-400" title="Save the pulled file">
+                            <Download className="w-4 h-4" />
+                          </Button>
+                        </a>
+                      ) : (
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-8 w-8 text-dark-400 hover:text-accent-400"
+                          disabled={busyPath === full}
+                          onClick={() => void startDownload(full)}
+                          title="Pull this file from the host"
+                        >
+                          {busyPath === full ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                        </Button>
+                      )
+                    )}
+                    <Button
+                      variant="ghost" size="icon"
+                      className="h-8 w-8 text-dark-400 hover:text-red-400"
+                      disabled={busyPath === full}
+                      onClick={() => void deleteRemote(full)}
+                      title="Delete on the host"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </motion.div>
+              )
+            })}
           </div>
         </ScrollArea>
+      )}
+
+      {fileTransfers.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-dark-800">
+          <p className="text-xs uppercase tracking-wide text-dark-500 mb-2">Transfers</p>
+          <div className="space-y-1">
+            {fileTransfers.slice(0, 6).map((t) => (
+              <div key={t.ID} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-dark-900/40 border border-dark-800 text-sm">
+                <span className="flex-1 min-w-0 truncate font-mono text-dark-300">{t.Path}</span>
+                <span className={cn(
+                  "px-2 py-0.5 rounded-full text-xs font-medium",
+                  t.Status === 'completed' ? 'bg-green-500/20 text-green-400'
+                    : t.Status === 'failed' ? 'bg-red-500/20 text-red-400'
+                      : 'bg-yellow-500/20 text-yellow-400'
+                )}>
+                  {t.Status}
+                </span>
+                {t.Status === 'completed' && (
+                  <a href={api.fileDownloadUrl(t.ID)} download>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-accent-400">
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Save
+                    </Button>
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )

@@ -123,8 +123,8 @@ func (m *Manager) CreateDownload(agentID, localPath, remotePath string) (*FileTr
 
 	_, err := m.db.Exec(`
 		INSERT INTO files (id, agent_id, filename, path, size, operation, status, temp_path, created_at)
-		VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
-	`, ft.ID, ft.AgentID, ft.Filename, ft.Operation, ft.Status, ft.TempPath, ft.CreatedAt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, ft.ID, ft.AgentID, ft.Filename, ft.Path, int64(0), ft.Operation, ft.Status, ft.TempPath, ft.CreatedAt)
 
 	if err != nil {
 		return nil, err
@@ -152,8 +152,8 @@ func (m *Manager) CreateDownloadExec(agentID, url, args string) (*FileTransfer, 
 
 	_, err := m.db.Exec(`
 		INSERT INTO files (id, agent_id, filename, path, size, operation, status, temp_path, created_at)
-		VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
-	`, ft.ID, ft.AgentID, ft.Filename, ft.Operation, ft.Status, ft.TempPath, ft.CreatedAt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, ft.ID, ft.AgentID, ft.Filename, ft.Path, int64(0), ft.Operation, ft.Status, ft.TempPath, ft.CreatedAt)
 
 	if err != nil {
 		return nil, err
@@ -207,13 +207,18 @@ func (m *Manager) HandleChunk(agentID, taskID string, payload json.RawMessage) {
 
 	// Update progress
 	ft.ChunksReceived++
-	ft.Progress = float64(ft.ChunksReceived) / float64(ft.ChunksTotal) * 100
+	if ft.ChunksTotal > 0 {
+		ft.Progress = float64(ft.ChunksReceived) / float64(ft.ChunksTotal) * 100
+	}
 	ft.Status = "transferring"
 
 	m.db.Exec("UPDATE files SET chunks_received = ?, progress = ?, status = ? WHERE id = ?",
 		ft.ChunksReceived, ft.Progress, ft.Status, ft.ID)
 
-	if chunk.IsLast || ft.ChunksReceived >= ft.ChunksTotal {
+	// A download transfer has no pre-known chunk count (ChunksTotal stays 0), so
+	// `ChunksReceived >= ChunksTotal` was true on the very first chunk and
+	// finalized a half-written file. Only the agent's is_last flag ends it.
+	if chunk.IsLast || (ft.ChunksTotal > 0 && ft.ChunksReceived >= ft.ChunksTotal) {
 		m.finalizeTransfer(ft)
 	}
 }

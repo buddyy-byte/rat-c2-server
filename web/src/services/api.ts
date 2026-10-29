@@ -166,8 +166,20 @@ class ApiClient {
     }))
   }
 
+  // Download links are plain <a href> navigations, which cannot carry an
+  // Authorization header — every one of them 401'd and the file never opened.
+  // The session token rides in the query string instead (same as /ws).
+  private tokenQuery(): string {
+    const t = this.getToken()
+    return t ? `?token=${encodeURIComponent(t)}` : ''
+  }
+
   payloadDownloadUrl(id: string): string {
-    return `${API_BASE}/api/payloads/${encodeURIComponent(id)}/download`
+    return `${API_BASE}/api/payloads/${encodeURIComponent(id)}/download${this.tokenQuery()}`
+  }
+
+  fileDownloadUrl(id: string): string {
+    return `${API_BASE}/api/files/${encodeURIComponent(id)}/download${this.tokenQuery()}`
   }
 
   async getOperator(id: string): Promise<{ id: string; username: string; email: string; role: string; created_at: string; last_login?: string; last_ip?: string }> {

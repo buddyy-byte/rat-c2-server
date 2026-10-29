@@ -164,7 +164,7 @@ func AllowedOrigin(origin string) bool {
 
 func requireSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if bearerUser(c) == "" {
+		if sessionUser(c) == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not logged in"})
 			return
 		}

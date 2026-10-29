@@ -116,8 +116,8 @@ func (q *Queue) EnqueueUpload(agentID, localPath, remotePath string, priority in
 	return q.Enqueue(agentID, "upload", taskArgs, priority)
 }
 
-func (q *Queue) EnqueueDownload(agentID, remotePath, localPath string, priority int) (*Task, error) {
-	taskArgs := map[string]string{"remote_path": remotePath, "local_path": localPath}
+func (q *Queue) EnqueueDownload(agentID, remotePath, localPath, fileID string, priority int) (*Task, error) {
+	taskArgs := map[string]string{"remote_path": remotePath, "local_path": localPath, "file_id": fileID}
 	return q.Enqueue(agentID, "download", taskArgs, priority)
 }
 

