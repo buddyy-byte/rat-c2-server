@@ -105,13 +105,18 @@ func saveLive() { saveLiveWithin(5 * time.Second) }
 
 func saveLiveNow() { saveLiveWithin(1500 * time.Millisecond) }
 
+// saveLiveForce ignores the debounce. Deletions must use it: a burst of deletes
+// inside the debounce window left the durable snapshot holding agents the
+// operator had already removed, and the next cold start resurrected them.
+func saveLiveForce() { saveLiveWithin(0) }
+
 func saveLiveWithin(minGap time.Duration) {
 	kind := liveStoreKind()
 	if kind == "memory" || agentMgrRef == nil {
 		return
 	}
 	liveMu.Lock()
-	if time.Since(lastLiveSave) < minGap {
+	if minGap > 0 && time.Since(lastLiveSave) < minGap {
 		liveMu.Unlock()
 		return
 	}

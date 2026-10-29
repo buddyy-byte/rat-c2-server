@@ -267,7 +267,7 @@ func deleteAgentHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		agentMgr.Remove(id)
-		saveLiveNow()
+		saveLiveForce()
 		c.JSON(http.StatusOK, gin.H{"message": "Agent removed"})
 	}
 }
