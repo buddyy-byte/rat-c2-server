@@ -62,9 +62,20 @@ func NewManager(db *sqlx.DB, storagePath string) *Manager {
 	return m
 }
 
+// fileCols names every column and COALESCEs the nullable ones. `SELECT *` on
+// this table returned NULL for checksum / mime_type / temp_path / error, and
+// scanning NULL into a plain Go string fails — which made every transfer read
+// (and therefore every download) error out with "File not found".
+const fileCols = `id, agent_id, filename, path, size,
+	COALESCE(checksum,'') as checksum, COALESCE(mime_type,'') as mime_type,
+	operation, COALESCE(status,'pending') as status, COALESCE(progress,0) as progress,
+	COALESCE(chunks_total,0) as chunks_total, COALESCE(chunks_received,0) as chunks_received,
+	COALESCE(temp_path,'') as temp_path, created_at, completed_at,
+	COALESCE(error,'') as error`
+
 func (m *Manager) loadActiveTransfers() {
 	var transfers []FileTransfer
-	err := m.db.Select(&transfers, "SELECT * FROM files WHERE status IN ('pending', 'transferring')")
+	err := m.db.Select(&transfers, "SELECT "+fileCols+" FROM files WHERE status IN ('pending', 'transferring')")
 	if err != nil {
 		log.Printf("[file] Load error: %v", err)
 		return
@@ -182,7 +193,7 @@ func (m *Manager) HandleChunk(agentID, taskID string, payload json.RawMessage) {
 	if !ok {
 		// Load from DB
 		var dbFT FileTransfer
-		err := m.db.Get(&dbFT, "SELECT * FROM files WHERE id = ?", chunk.FileID)
+		err := m.db.Get(&dbFT, "SELECT "+fileCols+" FROM files WHERE id = ?", chunk.FileID)
 		if err != nil {
 			return
 		}
@@ -321,19 +332,19 @@ func (m *Manager) computeChecksum(path string) (string, error) {
 
 func (m *Manager) Get(id string) (*FileTransfer, error) {
 	var ft FileTransfer
-	err := m.db.Get(&ft, "SELECT * FROM files WHERE id = ?", id)
+	err := m.db.Get(&ft, "SELECT "+fileCols+" FROM files WHERE id = ?", id)
 	return &ft, err
 }
 
 func (m *Manager) GetByAgent(agentID string) ([]*FileTransfer, error) {
 	var files []*FileTransfer
-	err := m.db.Select(&files, "SELECT * FROM files WHERE agent_id = ? ORDER BY created_at DESC", agentID)
+	err := m.db.Select(&files, "SELECT "+fileCols+" FROM files WHERE agent_id = ? ORDER BY created_at DESC", agentID)
 	return files, err
 }
 
 func (m *Manager) GetByOperation(agentID, operation string) ([]*FileTransfer, error) {
 	var files []*FileTransfer
-	err := m.db.Select(&files, "SELECT * FROM files WHERE agent_id = ? AND operation = ? ORDER BY created_at DESC", agentID, operation)
+	err := m.db.Select(&files, "SELECT "+fileCols+" FROM files WHERE agent_id = ? AND operation = ? ORDER BY created_at DESC", agentID, operation)
 	return files, err
 }
 
