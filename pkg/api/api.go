@@ -39,6 +39,7 @@ func SetDB(d *sqlx.DB) {
 	if d != nil {
 		hydrateSeats()
 		hydrateLive()
+		filetransfer.HydrateFileMeta(d)
 	}
 }
 
@@ -545,14 +546,20 @@ func downloadStoredFileHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 		c.Header("Content-Transfer-Encoding", "binary")
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", ft.Filename))
 		c.Header("Content-Type", "application/octet-stream")
-		c.File(ft.TempPath)
+		if ft.Size > 0 {
+			c.Header("Content-Length", strconv.FormatInt(ft.Size, 10))
+		}
+		c.Status(http.StatusOK)
+		if _, err := fileMgr.Serve(ft, c.Writer); err != nil {
+			log.Printf("[file] serve %s: %v", id, err)
+		}
 	}
 }
 
 func deleteFileTransferHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		fileMgr.Delete(id)
+		_ = fileMgr.DeleteTransfer(id)
 		c.JSON(http.StatusOK, gin.H{"message": "File transfer deleted"})
 	}
 }

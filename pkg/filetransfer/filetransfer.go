@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -207,14 +208,23 @@ func (m *Manager) HandleChunk(agentID, taskID string, payload json.RawMessage) {
 		return
 	}
 
-	// Write chunk to temp file
-	file, err := os.OpenFile(ft.TempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Printf("[file] Open temp error: %v", err)
-		return
+	if BlobEnabled() {
+		if err := putChunk(ft.ID, chunk.ChunkIndex, chunk.Data); err != nil {
+			log.Printf("[file] blob chunk %d for %s: %v", chunk.ChunkIndex, ft.ID, err)
+			m.failTransfer(ft, "blob write failed: "+err.Error())
+			return
+		}
+		ft.TempPath = blobMarker + ft.ID
+	} else {
+		file, err := os.OpenFile(ft.TempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Printf("[file] Open temp error: %v", err)
+			return
+		}
+		file.Write(chunk.Data)
+		file.Close()
 	}
-	file.Write(chunk.Data)
-	file.Close()
+	ft.Size += int64(len(chunk.Data))
 
 	// Update progress
 	ft.ChunksReceived++
@@ -223,15 +233,17 @@ func (m *Manager) HandleChunk(agentID, taskID string, payload json.RawMessage) {
 	}
 	ft.Status = "transferring"
 
-	m.db.Exec("UPDATE files SET chunks_received = ?, progress = ?, status = ? WHERE id = ?",
-		ft.ChunksReceived, ft.Progress, ft.Status, ft.ID)
+	m.db.Exec("UPDATE files SET chunks_received = ?, progress = ?, status = ?, size = ? WHERE id = ?",
+		ft.ChunksReceived, ft.Progress, ft.Status, ft.Size, ft.ID)
 
 	// A download transfer has no pre-known chunk count (ChunksTotal stays 0), so
 	// `ChunksReceived >= ChunksTotal` was true on the very first chunk and
 	// finalized a half-written file. Only the agent's is_last flag ends it.
 	if chunk.IsLast || (ft.ChunksTotal > 0 && ft.ChunksReceived >= ft.ChunksTotal) {
 		m.finalizeTransfer(ft)
+		return
 	}
+	m.persistFileMeta(false)
 }
 
 func (m *Manager) HandleComplete(agentID, taskID string, payload json.RawMessage) {
@@ -247,10 +259,39 @@ func (m *Manager) HandleComplete(agentID, taskID string, payload json.RawMessage
 	m.mu.Unlock()
 
 	if !ok {
-		return
+		// The final chunk already finalized this transfer, so it is out of the
+		// in-memory map by the time file_complete lands. Load it back and record
+		// what the agent reported instead of silently dropping it.
+		var dbFT FileTransfer
+		if err := m.db.Get(&dbFT, "SELECT "+fileCols+" FROM files WHERE id = ?", complete.FileID); err != nil {
+			return
+		}
+		if dbFT.AgentID != agentID {
+			return
+		}
+		ft = &dbFT
 	}
 
 	if ft.AgentID != agentID {
+		return
+	}
+
+	if strings.HasPrefix(ft.TempPath, blobMarker) {
+		id := strings.TrimPrefix(ft.TempPath, blobMarker)
+		if complete.Checksum != "" {
+			actual, err := sha256OfBlob(id)
+			if err != nil || actual != complete.Checksum {
+				log.Printf("[file] blob checksum mismatch for %s", ft.ID)
+				m.failTransfer(ft, "Checksum mismatch")
+				return
+			}
+			ft.Checksum = complete.Checksum
+		}
+		if complete.Size > 0 {
+			ft.Size = complete.Size
+		}
+		m.db.Exec("UPDATE files SET size = ?, checksum = ? WHERE id = ?", ft.Size, ft.Checksum, ft.ID)
+		go m.persistFileMeta(true)
 		return
 	}
 
@@ -275,18 +316,21 @@ func (m *Manager) finalizeTransfer(ft *FileTransfer) {
 	ft.CompletedAt = &now
 	ft.Progress = 100
 
-	// Move to permanent location based on operation
-	var finalPath string
-	switch ft.Operation {
-	case "upload":
-		finalPath = filepath.Join(m.storage, "uploads", ft.AgentID, ft.Filename)
-	case "download", "download_exec":
-		finalPath = filepath.Join(m.storage, "downloads", ft.AgentID, ft.Filename)
-	}
+	// Move to permanent location based on operation. Blob-backed transfers are
+	// already durable where they are — there is no local file to move.
+	if !strings.HasPrefix(ft.TempPath, blobMarker) {
+		var finalPath string
+		switch ft.Operation {
+		case "upload":
+			finalPath = filepath.Join(m.storage, "uploads", ft.AgentID, ft.Filename)
+		case "download", "download_exec":
+			finalPath = filepath.Join(m.storage, "downloads", ft.AgentID, ft.Filename)
+		}
 
-	os.MkdirAll(filepath.Dir(finalPath), 0755)
-	os.Rename(ft.TempPath, finalPath)
-	ft.TempPath = finalPath
+		os.MkdirAll(filepath.Dir(finalPath), 0755)
+		os.Rename(ft.TempPath, finalPath)
+		ft.TempPath = finalPath
+	}
 
 	m.db.Exec(`
 		UPDATE files SET status = ?, progress = ?, completed_at = ?, temp_path = ?, size = ?, checksum = ?
@@ -297,7 +341,9 @@ func (m *Manager) finalizeTransfer(ft *FileTransfer) {
 	delete(m.transfers, ft.ID)
 	m.mu.Unlock()
 
-	log.Printf("[file] Transfer completed: %s (%s)", ft.ID, ft.Operation)
+	go m.persistFileMeta(true)
+
+	log.Printf("[file] Transfer completed: %s (%s) %d bytes", ft.ID, ft.Operation, ft.Size)
 }
 
 func (m *Manager) failTransfer(ft *FileTransfer, errMsg string) {
