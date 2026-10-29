@@ -209,12 +209,13 @@ func (m *Manager) HandleChunk(agentID, taskID string, payload json.RawMessage) {
 	}
 
 	if BlobEnabled() {
-		if err := putChunk(ft.ID, chunk.ChunkIndex, chunk.Data); err != nil {
+		host, err := putChunk(ft.ID, chunk.ChunkIndex, chunk.Data)
+		if err != nil {
 			log.Printf("[file] blob chunk %d for %s: %v", chunk.ChunkIndex, ft.ID, err)
 			m.failTransfer(ft, "blob write failed: "+err.Error())
 			return
 		}
-		ft.TempPath = blobMarker + ft.ID
+		ft.TempPath = blobRef(host, ft.ID)
 	} else {
 		file, err := os.OpenFile(ft.TempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
@@ -276,10 +277,9 @@ func (m *Manager) HandleComplete(agentID, taskID string, payload json.RawMessage
 		return
 	}
 
-	if strings.HasPrefix(ft.TempPath, blobMarker) {
-		id := strings.TrimPrefix(ft.TempPath, blobMarker)
+	if host, id, isBlob := parseBlobRef(ft.TempPath); isBlob {
 		if complete.Checksum != "" {
-			actual, err := sha256OfBlob(id)
+			actual, err := sha256OfBlob(host, id)
 			if err != nil || actual != complete.Checksum {
 				log.Printf("[file] blob checksum mismatch for %s", ft.ID)
 				m.failTransfer(ft, "Checksum mismatch")

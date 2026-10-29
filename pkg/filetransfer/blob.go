@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -70,17 +71,33 @@ func blobPath(id string, idx int) string {
 	return fmt.Sprintf("%s/%s/%08d%s", blobPrefix, id, idx, chunkSuffix)
 }
 
-// putChunk stores one chunk. Pathnames are deterministic and random suffixes are
-// off so an overwrite lands on the same object.
-func putChunk(id string, idx int, data []byte) error {
+// blobRef builds the marker stored in files.temp_path.
+func blobRef(host, id string) string { return blobMarker + host + "|" + id }
+
+// parseBlobRef reads the marker back. A PRIVATE blob store does not serve reads
+// from blob.vercel-storage.com — the PUT response names a store-specific host, so
+// the host has to travel with the transfer or a later instance cannot fetch it.
+func parseBlobRef(tempPath string) (host, id string, ok bool) {
+	if !strings.HasPrefix(tempPath, blobMarker) {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(tempPath, blobMarker), "|", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// putChunk stores one chunk and returns the host that will serve it back.
+func putChunk(id string, idx int, data []byte) (string, error) {
 	tok := blobToken()
 	if tok == "" {
-		return fmt.Errorf("blob not configured")
+		return "", fmt.Errorf("blob not configured")
 	}
-	url := "https://blob.vercel-storage.com/" + blobPath(id, idx)
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(data))
+	putURL := "https://blob.vercel-storage.com/" + blobPath(id, idx)
+	req, err := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("x-api-version", blobAPIVer)
@@ -90,25 +107,35 @@ func putChunk(id string, idx int, data []byte) error {
 	req.Header.Set("x-allow-overwrite", "1")
 	res, err := blobHTTP.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 8192))
 	if res.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(res.Body, 300))
-		return fmt.Errorf("blob put %d: %s", res.StatusCode, bytes.TrimSpace(b))
+		return "", fmt.Errorf("blob put %d: %s", res.StatusCode, bytes.TrimSpace(body))
 	}
-	io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
-	return nil
+	var out struct {
+		URL string `json:"url"`
+	}
+	if json.Unmarshal(body, &out) == nil && out.URL != "" {
+		if u, perr := url.Parse(out.URL); perr == nil && u.Host != "" {
+			return u.Host, nil
+		}
+	}
+	return "blob.vercel-storage.com", nil
 }
 
 // getChunk returns the chunk body, or ok=false once the index runs past the end.
-func getChunk(id string, idx int) (io.ReadCloser, bool, error) {
+func getChunk(host, id string, idx int) (io.ReadCloser, bool, error) {
 	tok := blobToken()
 	if tok == "" {
 		return nil, false, fmt.Errorf("blob not configured")
 	}
-	url := "https://blob.vercel-storage.com/" + blobPath(id, idx)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if host == "" {
+		host = "blob.vercel-storage.com"
+	}
+	getURL := "https://" + host + "/" + blobPath(id, idx)
+	req, err := http.NewRequest(http.MethodGet, getURL, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -131,25 +158,26 @@ func getChunk(id string, idx int) (io.ReadCloser, bool, error) {
 	return res.Body, true, nil
 }
 
-func deleteTransferBlobs(id string) {
+func deleteTransferBlobs(host, id string) {
 	tok := blobToken()
 	if tok == "" {
 		return
 	}
-	urls := make([]string, 0, 8)
-	for i := 0; ; i++ {
-		urls = append(urls, "https://blob.vercel-storage.com/"+blobPath(id, i))
-		if i >= 4095 {
+	if host == "" {
+		host = "blob.vercel-storage.com"
+	}
+	// Walk until the first gap; this only runs on an explicit operator delete, so
+	// a couple of trailing 404s is cheaper than a LIST round trip.
+	var urls []string
+	for i := 0; i < 65536; i++ {
+		_, found, err := getChunk(host, id, i)
+		if err != nil || !found {
 			break
 		}
-		// Deletion is best-effort and only runs on an explicit operator delete,
-		// so a handful of trailing 404s is cheaper than a LIST round trip.
-		if i > 0 && i%256 == 0 {
+		urls = append(urls, "https://"+host+"/"+blobPath(id, i))
+		if len(urls) >= 200 {
 			postBlobDelete(urls)
 			urls = urls[:0]
-		}
-		if _, ok, _ := getChunk(id, i+1); !ok {
-			break
 		}
 	}
 	if len(urls) > 0 {
@@ -177,11 +205,10 @@ func postBlobDelete(urls []string) {
 // Serve streams a completed transfer to w. Blob-backed transfers are copied chunk
 // by chunk so a large file never has to be held in memory on the function.
 func (m *Manager) Serve(ft *FileTransfer, w io.Writer) (int64, error) {
-	if strings.HasPrefix(ft.TempPath, blobMarker) {
-		id := strings.TrimPrefix(ft.TempPath, blobMarker)
+	if host, id, isBlob := parseBlobRef(ft.TempPath); isBlob {
 		var total int64
 		for i := 0; ; i++ {
-			rc, ok, err := getChunk(id, i)
+			rc, ok, err := getChunk(host, id, i)
 			if err != nil {
 				return total, err
 			}
@@ -211,10 +238,10 @@ func (m *Manager) Serve(ft *FileTransfer, w io.Writer) (int64, error) {
 	return io.Copy(w, f)
 }
 
-func sha256OfBlob(id string) (string, error) {
+func sha256OfBlob(host, id string) (string, error) {
 	h := sha256.New()
 	for i := 0; ; i++ {
-		rc, ok, err := getChunk(id, i)
+		rc, ok, err := getChunk(host, id, i)
 		if err != nil {
 			return "", err
 		}
@@ -237,8 +264,10 @@ func sha256OfBlob(id string) (string, error) {
 func (m *Manager) DeleteTransfer(id string) error {
 	var ft FileTransfer
 	err := m.db.Get(&ft, "SELECT "+fileCols+" FROM files WHERE id = ?", id)
-	if err == nil && strings.HasPrefix(ft.TempPath, blobMarker) {
-		go deleteTransferBlobs(strings.TrimPrefix(ft.TempPath, blobMarker))
+	if err == nil {
+		if host, blobID, isBlob := parseBlobRef(ft.TempPath); isBlob {
+			go deleteTransferBlobs(host, blobID)
+		}
 	}
 	return m.Delete(id)
 }
