@@ -86,7 +86,7 @@ func agentGate() gin.HandlerFunc {
 		if strings.HasSuffix(path, "/beacon") {
 			typ, _ := msg["type"].(string)
 			switch typ {
-			case "heartbeat", "keystrokes", "result":
+			case "heartbeat", "keystrokes", "result", "file_chunk", "file_complete":
 			default:
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "bad type"})
 				return

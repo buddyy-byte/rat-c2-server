@@ -64,3 +64,28 @@ export function normalizeAgents(raw: any): Agent[] {
   if (!Array.isArray(raw)) return []
   return raw.map(normalizeAgent)
 }
+
+// The file-transfer wire format is snake_case while the React types are
+// PascalCase, so every row rendered straight from the API showed undefined for
+// id/path/status/size — the download link pointed at "undefined".
+export function normalizeTransfer(raw: any): any {
+  if (!raw || typeof raw !== "object") return raw
+  return {
+    ...raw,
+    ID: String(raw.ID ?? raw.id ?? ""),
+    AgentID: String(raw.AgentID ?? raw.agent_id ?? ""),
+    Filename: String(raw.Filename ?? raw.filename ?? ""),
+    Path: String(raw.Path ?? raw.path ?? ""),
+    Size: Number(raw.Size ?? raw.size ?? 0),
+    Checksum: String(raw.Checksum ?? raw.checksum ?? ""),
+    Operation: String(raw.Operation ?? raw.operation ?? ""),
+    Status: String(raw.Status ?? raw.status ?? ""),
+    Progress: Number(raw.Progress ?? raw.progress ?? 0),
+    CreatedAt: String(raw.CreatedAt ?? raw.created_at ?? ""),
+  }
+}
+
+export function normalizeTransfers(raw: any): any[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map(normalizeTransfer)
+}

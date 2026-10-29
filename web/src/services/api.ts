@@ -1,5 +1,5 @@
 import type { Agent, Task, FileTransfer, Credential, Cookie, DiscordToken, Keystroke, Screenshot, ProcessInfo, LateralMove, EvasionAction, Module, PayloadConfig, BuildResult } from '@/types'
-import { normalizeAgent, normalizeAgents } from '@/lib/utils'
+import { normalizeAgent, normalizeAgents, normalizeTransfer, normalizeTransfers } from '@/lib/utils'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? 'http://localhost:8080' : '')
 
@@ -255,13 +255,14 @@ class ApiClient {
 
   // File Transfers
   async getFileTransfers(agentId: string): Promise<FileTransfer[]> {
-    return this.request<FileTransfer[]>(`/api/agents/${agentId}/files`)
+    const raw = await this.request<any[]>(`/api/agents/${agentId}/files`)
+    return normalizeTransfers(raw)
   }
 
   async downloadFile(agentId: string, path: string): Promise<Task> {
     return this.request<Task>(`/api/agents/${agentId}/files/download`, {
       method: 'POST',
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, remote_path: path }),
     })
   }
 
