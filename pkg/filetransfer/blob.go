@@ -272,6 +272,29 @@ func (m *Manager) DeleteTransfer(id string) error {
 	return m.Delete(id)
 }
 
+// PurgeAgentTransfers removes every transfer row for an agent and the blobs
+// behind them. Deleting an agent cascades its rows away via the FK, so without
+// this the chunk objects stayed in Blob forever with nothing pointing at them.
+func (m *Manager) PurgeAgentTransfers(agentID string) int {
+	if m.db == nil || strings.TrimSpace(agentID) == "" {
+		return 0
+	}
+	var rows []FileTransfer
+	if err := m.db.Select(&rows, "SELECT "+fileCols+" FROM files WHERE agent_id = ?", agentID); err != nil {
+		return 0
+	}
+	n := 0
+	for _, r := range rows {
+		if host, id, ok := parseBlobRef(r.TempPath); ok {
+			deleteTransferBlobs(host, id)
+		}
+		n++
+	}
+	_, _ = m.db.Exec("DELETE FROM files WHERE agent_id = ?", agentID)
+	go m.persistFileMeta(true)
+	return n
+}
+
 // ---- metadata mirror -------------------------------------------------------
 
 var metaMu sync.Mutex

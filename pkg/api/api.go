@@ -71,7 +71,7 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 
 			op.GET("/agents", getAgentsHandler(agentMgr))
 			op.GET("/agents/:id", getAgentHandler(agentMgr))
-			op.DELETE("/agents/:id", deleteAgentHandler(agentMgr))
+			op.DELETE("/agents/:id", deleteAgentHandler(agentMgr, fileMgr))
 			op.PATCH("/agents/:id", updateAgentHandler(agentMgr))
 			op.POST("/agents/:id/shell", executeShellHandler(taskQueue))
 			op.POST("/agents/:id/screenshot", takeScreenshotHandler(taskQueue))
@@ -264,9 +264,14 @@ func getAgentHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 	}
 }
 
-func deleteAgentHandler(agentMgr *agent.Manager) gin.HandlerFunc {
+func deleteAgentHandler(agentMgr *agent.Manager, fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
+		if fileMgr != nil {
+			if n := fileMgr.PurgeAgentTransfers(id); n > 0 {
+				log.Printf("[agent] purged %d transfer(s) for %s", n, id)
+			}
+		}
 		markDeleted(id)
 		agentMgr.Remove(id)
 		saveLiveForce()
