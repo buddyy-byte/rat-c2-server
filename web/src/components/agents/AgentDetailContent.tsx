@@ -219,6 +219,7 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
   const [dirError, setDirError] = React.useState<string | null>(null)
   const [downloadIds, setDownloadIds] = React.useState<Record<string, string>>({})
   const [busyPath, setBusyPath] = React.useState<string | null>(null)
+  const [procRows, setProcRows] = React.useState<Array<{ PID: number; Name: string; User: string }>>([])
 
   // Fetch data based on mode
   React.useEffect(() => {
@@ -665,8 +666,31 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
     </div>
   )
 
+  const loadProcesses = async () => {
+    setListingBusy(true); setDirError(null)
+    try {
+      const ps = `powershell -nop -c "Get-Process | ForEach-Object { [pscustomobject]@{ pid=$_.Id; name=$_.ProcessName; path=$_.Path } } | ConvertTo-Json -Compress"`
+      const task: any = await executeShell(agentId, ps)
+      const done = await pollTask(task?.ID ?? task?.id, 25000)
+      if (!done) { setDirError('process list timed out — the agent has to be beaconing'); return }
+      const raw = done.output.trim()
+      if (!raw) { setProcRows([]); return }
+      const parsed = JSON.parse(raw)
+      const arr = Array.isArray(parsed) ? parsed : [parsed]
+      setProcRows(arr.map((p: any) => ({
+        PID: Number(p?.pid ?? 0),
+        Name: String(p?.name ?? ''),
+        User: String(p?.path ?? ''),
+      })).filter((p: any) => p.Name))
+    } catch (err) {
+      setDirError(err instanceof Error ? err.message : 'process list failed')
+    } finally {
+      setListingBusy(false)
+    }
+  }
+
   const renderProcesses = () => {
-    const filteredProcesses = processes.filter(p =>
+    const filteredProcesses = procRows.filter(p =>
       p.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.PID.toString().includes(searchTerm) ||
       p.User.toLowerCase().includes(searchTerm.toLowerCase())
@@ -685,8 +709,8 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-64"
           />
-          <Button variant="outline" size="sm" onClick={() => fetchProcesses(agentId)}>
-            <RefreshCw className="w-4 h-4" />
+          <Button variant="outline" size="sm" onClick={() => void loadProcesses()} disabled={listingBusy}>
+            <RefreshCw className={cn("w-4 h-4", listingBusy && "animate-spin")} />
           </Button>
         </div>
       </div>
