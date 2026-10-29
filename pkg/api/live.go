@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"chemicalumbra.dev/server/pkg/agent"
+	"chemicalumbra.dev/server/pkg/filetransfer"
 	"chemicalumbra.dev/server/pkg/task"
 )
 
@@ -431,6 +432,7 @@ func liveHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 			"ts":        time.Now().UTC(),
 			"durable":   liveStoreKind() != "memory",
 			"store":     liveStoreKind(),
+			"blob":      filetransfer.BlobEnabled(),
 			"stats":     statsFor(agentMgr, taskQueueRef),
 			"agents":    out,
 			"tasks":     recent,
