@@ -71,7 +71,55 @@ func kvToken() string {
 
 type liveSnapshot struct {
 	Agents  []*agent.Agent `json:"agents"`
+	Deleted []string       `json:"deleted,omitempty"`
 	SavedAt time.Time      `json:"saved_at"`
+}
+
+// Tombstones for agents the operator deleted. Without them, a delete that lands
+// on instance B (which never held the agent) is a no-op, and B's next full-list
+// write resurrects the agent it just hydrated from the previous snapshot.
+var (
+	tombMu   sync.Mutex
+	tombstoned = map[string]bool{}
+)
+
+const tombstoneCap = 500
+
+func markDeleted(id string) {
+	if strings.TrimSpace(id) == "" {
+		return
+	}
+	tombMu.Lock()
+	defer tombMu.Unlock()
+	tombstoned[id] = true
+	if len(tombstoned) > tombstoneCap {
+		// Drop the oldest insertions; the map has no order, so trim by rebuilding
+		// from a slice captured once. Deletes are rare — this keeps it bounded.
+		n := 0
+		for k := range tombstoned {
+			if n >= tombstoneCap/2 {
+				break
+			}
+			delete(tombstoned, k)
+			n++
+		}
+	}
+}
+
+func isTombstoned(id string) bool {
+	tombMu.Lock()
+	defer tombMu.Unlock()
+	return tombstoned[id]
+}
+
+func tombstoneList() []string {
+	tombMu.Lock()
+	defer tombMu.Unlock()
+	out := make([]string, 0, len(tombstoned))
+	for k := range tombstoned {
+		out = append(out, k)
+	}
+	return out
 }
 
 // displayStatus recomputes liveness from LastSeen instead of trusting a stored
@@ -123,7 +171,14 @@ func saveLiveWithin(minGap time.Duration) {
 	lastLiveSave = time.Now()
 	liveMu.Unlock()
 
-	snap := liveSnapshot{Agents: agentMgrRef.List(), SavedAt: time.Now()}
+	snap := liveSnapshot{Agents: make([]*agent.Agent, 0), SavedAt: time.Now()}
+	for _, a := range agentMgrRef.List() {
+		if a == nil || isTombstoned(a.ID) {
+			continue
+		}
+		snap.Agents = append(snap.Agents, a)
+	}
+	snap.Deleted = tombstoneList()
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return
@@ -240,8 +295,19 @@ func hydrateLive() {
 		return
 	}
 	n := 0
+	tombMu.Lock()
+	for _, id := range snap.Deleted {
+		if strings.TrimSpace(id) != "" {
+			tombstoned[id] = true
+		}
+	}
+	tombMu.Unlock()
 	for _, a := range snap.Agents {
 		if a == nil || a.ID == "" || a.HwID == "" {
+			continue
+		}
+		if isTombstoned(a.ID) {
+			_, _ = db.Exec(`DELETE FROM agents WHERE id = ?`, a.ID)
 			continue
 		}
 		if a.Status == "dead" {
