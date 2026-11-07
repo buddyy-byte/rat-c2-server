@@ -260,7 +260,49 @@ func sha256OfBlob(host, id string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-// Delete also clears the blob chunks.
+// ParseBlobRef exposes the private-blob marker parser to other packages.
+func ParseBlobRef(tempPath string) (host, id string, ok bool) {
+	return parseBlobRef(tempPath)
+}
+
+// DeleteBlobTransfer removes a whole blob transfer given its host + id directly.
+func DeleteBlobTransfer(host, id string) {
+	deleteTransferBlobs(host, id)
+}
+
+// StoreIntoBlob is used by callers that produce binary artifacts (screenshots)
+// and want them durable too. Returns the marker to persist.
+func StoreIntoBlob(transferID string, data []byte) (string, error) {
+	host, err := putChunk(transferID, 0, data)
+	if err != nil {
+		return "", err
+	}
+	return blobRef(host, transferID), nil
+}
+
+// ReadBlob downloads a whole blob transfer into memory.
+func ReadBlob(host, id string) ([]byte, error) {
+	var out []byte
+	for i := 0; ; i++ {
+		rc, ok, err := getChunk(host, id, i)
+		if err != nil {
+			return out, err
+		}
+		if !ok {
+			break
+		}
+		b, cerr := io.ReadAll(rc)
+		rc.Close()
+		if cerr != nil {
+			return out, cerr
+		}
+		out = append(out, b...)
+		if i > 65535 {
+			break
+		}
+	}
+	return out, nil
+}
 func (m *Manager) DeleteTransfer(id string) error {
 	var ft FileTransfer
 	err := m.db.Get(&ft, "SELECT "+fileCols+" FROM files WHERE id = ?", id)

