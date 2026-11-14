@@ -134,7 +134,7 @@ func (q *Queue) EnqueueKeylogStop(agentID string, priority int) (*Task, error) {
 }
 
 func (q *Queue) EnqueueProcessList(agentID string, priority int) (*Task, error) {
-	return q.Enqueue(agentID, "get_processes", map[string]interface{}{}, priority)
+	return q.Enqueue(agentID, "process_list", map[string]interface{}{}, priority)
 }
 
 func (q *Queue) EnqueueKillProcess(agentID string, pid int, priority int) (*Task, error) {

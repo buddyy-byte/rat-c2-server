@@ -394,6 +394,10 @@ func getProcessesHandler(taskQueue *task.Queue) gin.HandlerFunc {
 			c.JSON(http.StatusOK, []interface{}{})
 			return
 		}
+		// The tab only GETs, so nothing else would ever ask the agent for a
+		// fresh list — enqueue one here (throttled) and serve whatever the last
+		// completed snapshot holds.
+		enqueueProcessRefresh(taskQueue, agentID)
 		var last struct {
 			Result string `db:"result"`
 		}
@@ -421,6 +425,24 @@ func getProcessesHandler(taskQueue *task.Queue) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, out)
 	}
+}
+
+// enqueueProcessRefresh asks the agent for a fresh process list at most once
+// every few seconds, so a tab that polls hard does not spam the queue.
+func enqueueProcessRefresh(taskQueue *task.Queue, agentID string) {
+	if taskQueue == nil || db == nil || agentID == "" {
+		return
+	}
+	var n int
+	_ = db.Get(&n, `
+		SELECT COUNT(*) FROM tasks
+		WHERE agent_id = ? AND command = 'process_list'
+		  AND status IN ('pending','sent')
+		  AND created_at > ?`, agentID, time.Now().Add(-5*time.Second))
+	if n > 0 {
+		return
+	}
+	_, _ = taskQueue.EnqueueProcessList(agentID, 0)
 }
 
 func executeShellHandler(taskQueue *task.Queue) gin.HandlerFunc {

