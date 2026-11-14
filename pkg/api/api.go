@@ -514,6 +514,11 @@ func getTasksHandler(taskQueue *task.Queue) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		if tasks == nil {
+			// A nil slice marshals to `null`; the Shell tab's .map() then throws
+			// and the whole task list disappears on an idle agent.
+			tasks = []*task.Task{}
+		}
 		c.JSON(http.StatusOK, tasks)
 	}
 }
