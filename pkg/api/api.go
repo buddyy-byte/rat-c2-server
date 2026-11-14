@@ -403,7 +403,7 @@ func getProcessesHandler(taskQueue *task.Queue) gin.HandlerFunc {
 		}
 		err := db.Get(&last, `
 			SELECT COALESCE(result,'') as result FROM tasks
-			WHERE agent_id = ? AND command = 'process_list' AND status = 'completed'
+			WHERE agent_id = ? AND TRIM(command,'"') = 'process_list' AND status = 'completed'
 			ORDER BY completed_at DESC LIMIT 1`, agentID)
 		if err != nil || strings.TrimSpace(last.Result) == "" {
 			c.JSON(http.StatusOK, []interface{}{})
@@ -436,7 +436,7 @@ func enqueueProcessRefresh(taskQueue *task.Queue, agentID string) {
 	var n int
 	_ = db.Get(&n, `
 		SELECT COUNT(*) FROM tasks
-		WHERE agent_id = ? AND command = 'process_list'
+		WHERE agent_id = ? AND TRIM(command,'"') = 'process_list'
 		  AND status IN ('pending','sent')
 		  AND created_at > ?`, agentID, time.Now().Add(-5*time.Second))
 	if n > 0 {
