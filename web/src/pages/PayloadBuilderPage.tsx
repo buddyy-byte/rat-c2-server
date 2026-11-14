@@ -43,7 +43,7 @@ import {
 import { toast } from 'sonner'
 
 const defaultConfig: PayloadConfig = {
-  ServerHost: 'chemical-umbra.vercel.app',
+  ServerHost: 'chemical-umbra-ten.vercel.app',
   ServerPort: 443,
   UseTLS: true,
   Platform: 'windows',

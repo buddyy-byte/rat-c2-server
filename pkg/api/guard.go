@@ -148,6 +148,7 @@ func SecurityHeaders() gin.HandlerFunc {
 func AllowedOrigin(origin string) bool {
 	switch strings.TrimRight(origin, "/") {
 	case "https://chemical-umbra.vercel.app",
+		"https://chemical-umbra-ten.vercel.app",
 		"https://chemical-umbra-landing.vercel.app",
 		"https://thechoicervoicergames.com",
 		"http://c2.local",
