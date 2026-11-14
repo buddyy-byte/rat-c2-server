@@ -206,6 +206,8 @@ func agentHTTPDataTaskHandler(agentMgr *agent.Manager, taskQueue *task.Queue, fi
 				}
 				_ = taskQueue.UpdateStatus(msg.TaskID, status)
 				taskQueue.HandleResult(msg.TaskID, msg.Output, msg.Code)
+				// A cold start would drop this result, so mirror the DB now.
+				go snapshotDB()
 				// A screenshot task's result IS the image (base64 JPEG from the
 				// stub) — persist it so the Screenshot tab has something to show.
 				if status == "completed" && db != nil {
@@ -314,6 +316,7 @@ func storeScreenshotResult(database *sqlx.DB, agentID, b64 string) {
 		return
 	}
 	log.Printf("[screenshot] stored %s (%d bytes, blob=%v)", id, len(data), marker != "")
+	go snapshotDB()
 }
 
 func deleteAgentHandler(agentMgr *agent.Manager, fileMgr *filetransfer.Manager) gin.HandlerFunc {
